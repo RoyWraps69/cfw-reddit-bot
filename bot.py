@@ -33,6 +33,7 @@ from reddit_session import RedditSession
 from scanner import (
     find_opportunities, save_posted_thread,
     get_thread_comments, check_for_competitor_mentions,
+    set_session as set_scanner_session,
 )
 from ai_responder import (
     classify_thread, generate_comment, generate_warming_comment,
@@ -384,6 +385,9 @@ def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "auto"
 
     if mode == "scan-only":
+        # Even scan-only needs auth to avoid 403 on datacenter IPs
+        rs = get_reddit_session()
+        set_scanner_session(rs)
         run_scan_only()
         return
 
@@ -392,6 +396,7 @@ def main():
         return
 
     rs = get_reddit_session()
+    set_scanner_session(rs)  # Scanner uses auth session to avoid 403
     karma = rs.get_karma()
     log(f"Current karma: {karma}")
 

@@ -1,5 +1,6 @@
 """
-Chicago Fleet Wraps Reddit Bot — Thread Scanner v2.0
+Chicago Fleet Wraps Reddit Bot — Thread Scanner v2.1
+Fixed: Uses authenticated RedditSession for all requests (prevents 403 on datacenter IPs).
 Optimized for faster warming, smarter scanning, and efficient API usage.
 """
 import json
@@ -7,7 +8,6 @@ import os
 import time
 import re
 import random
-import requests
 from datetime import datetime, timedelta
 from config import (
     ALL_TARGET_SUBS, ALL_KEYWORDS, COMPETITORS,
@@ -20,13 +20,32 @@ from config import (
     get_seasonal_config,
 )
 
-# Shared session for connection pooling (faster than new connections each time)
-_session = requests.Session()
-_session.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/json",
-})
+# Module-level reference to the authenticated session — set via set_session()
+_auth_session = None
+
+
+def set_session(reddit_session):
+    """Set the authenticated RedditSession for all scanner requests.
+    Must be called before any scanning functions.
+    """
+    global _auth_session
+    _auth_session = reddit_session
+
+
+def _get_request_session():
+    """Get the requests.Session to use — authenticated if available."""
+    if _auth_session and hasattr(_auth_session, 'session'):
+        return _auth_session.session
+    # Fallback to a plain session (will likely get 403 on datacenter IPs)
+    import requests
+    s = requests.Session()
+    s.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+    })
+    print("  [WARN] Using unauthenticated session — may get 403 errors")
+    return s
 
 
 def load_posted_threads() -> set:
@@ -53,10 +72,14 @@ def save_posted_thread(thread_id: str):
 
 
 def _fetch_reddit_json(url: str, params: dict = None, retries: int = 2) -> dict | None:
-    """Fetch a Reddit JSON endpoint with retry logic and rate limiting."""
+    """Fetch a Reddit JSON endpoint with retry logic and rate limiting.
+    Uses the authenticated session to avoid 403 blocks.
+    """
+    session = _get_request_session()
+    
     for attempt in range(retries + 1):
         try:
-            resp = _session.get(url, params=params, timeout=10)
+            resp = session.get(url, params=params, timeout=10)
             if resp.status_code == 200:
                 return resp.json()
             elif resp.status_code == 429:
@@ -66,16 +89,24 @@ def _fetch_reddit_json(url: str, params: dict = None, retries: int = 2) -> dict 
                 time.sleep(wait)
             elif resp.status_code == 403:
                 print(f"  [403] Access denied for {url}")
+                # If using authenticated session and still 403, try old.reddit.com
+                if _auth_session and "www.reddit.com" in url:
+                    alt_url = url.replace("www.reddit.com", "old.reddit.com")
+                    print(f"  [RETRY] Trying old.reddit.com...")
+                    resp2 = session.get(alt_url, params=params, timeout=10)
+                    if resp2.status_code == 200:
+                        return resp2.json()
+                    print(f"  [403] old.reddit.com also denied")
                 return None
             else:
                 print(f"  [HTTP {resp.status_code}] {url}")
                 time.sleep(2)
-        except requests.exceptions.Timeout:
-            print(f"  [TIMEOUT] {url} (attempt {attempt + 1})")
-            time.sleep(2)
         except Exception as e:
             print(f"  [ERROR] {url}: {e}")
-            return None
+            if attempt < retries:
+                time.sleep(2)
+            else:
+                return None
     return None
 
 
@@ -317,6 +348,10 @@ def find_opportunities(mode: str = "normal") -> list[dict]:
     print(f"  SCAN STARTED — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"  Mode: {mode}")
     print(f"  Season: {seasonal['note']}")
+    if _auth_session:
+        print(f"  Auth: Using authenticated session")
+    else:
+        print(f"  Auth: WARNING — no authenticated session set!")
     print(f"{'='*60}\n")
 
     if mode == "warming":

@@ -1,13 +1,13 @@
 """
-Chicago Fleet Wraps — Media Generator v1.0
+Chicago Fleet Wraps — Media Generator v2.0
 AI IMAGE & VIDEO GENERATION FOR SOCIAL MEDIA
 
-This module:
-1. Takes a content decision from the brain
-2. Generates a unique AI image (via OpenAI DALL-E or compatible API)
-3. Optionally creates a slideshow video from the image for TikTok
-4. Adapts the caption for each platform's native voice
-5. Returns platform-ready content packages
+v2.0 Changes:
+- Primary: Pillow-based branded template images (always works, no API needed)
+- Secondary: AI image generation via DALL-E when available
+- Video: ffmpeg slideshow with Ken Burns effect for TikTok
+- Caption adaptation per platform
+- Content uniqueness tracking
 
 RULE: Each post is UNIQUE content, but the SAME content gets published
 across all platforms (Facebook, Instagram, TikTok) simultaneously,
@@ -17,6 +17,8 @@ import os
 import json
 import time
 import hashlib
+import random
+import textwrap
 import requests
 from datetime import datetime
 from openai import OpenAI
@@ -29,6 +31,23 @@ MEDIA_DIR = os.path.join(DATA_DIR, "generated_media")
 MEDIA_LOG = os.path.join(DATA_DIR, "media_generation_log.json")
 PUBLISHED_HASHES = os.path.join(DATA_DIR, "published_content_hashes.json")
 
+# CFW Brand Colors
+CFW_DARK = (15, 23, 42)       # Dark navy
+CFW_ACCENT = (59, 130, 246)   # Blue accent
+CFW_WHITE = (255, 255, 255)
+CFW_LIGHT_GRAY = (226, 232, 240)
+CFW_ORANGE = (249, 115, 22)   # Orange accent
+
+# Brand templates — different styles for variety
+TEMPLATE_STYLES = [
+    {"bg_top": (15, 23, 42), "bg_bottom": (30, 58, 138), "accent": (59, 130, 246), "text": (255, 255, 255)},
+    {"bg_top": (17, 24, 39), "bg_bottom": (55, 48, 163), "accent": (139, 92, 246), "text": (255, 255, 255)},
+    {"bg_top": (30, 41, 59), "bg_bottom": (15, 23, 42), "accent": (249, 115, 22), "text": (255, 255, 255)},
+    {"bg_top": (0, 0, 0), "bg_bottom": (30, 30, 30), "accent": (34, 197, 94), "text": (255, 255, 255)},
+    {"bg_top": (15, 23, 42), "bg_bottom": (88, 28, 135), "accent": (236, 72, 153), "text": (255, 255, 255)},
+    {"bg_top": (20, 20, 20), "bg_bottom": (50, 50, 50), "accent": (59, 130, 246), "text": (255, 255, 255)},
+]
+
 
 def _ensure_dirs():
     os.makedirs(MEDIA_DIR, exist_ok=True)
@@ -36,7 +55,6 @@ def _ensure_dirs():
 
 
 def _load_published_hashes() -> set:
-    """Load hashes of previously published content to ensure uniqueness."""
     if os.path.exists(PUBLISHED_HASHES):
         try:
             with open(PUBLISHED_HASHES, "r") as f:
@@ -47,48 +65,214 @@ def _load_published_hashes() -> set:
 
 
 def _save_published_hash(content_hash: str):
-    """Save a content hash to prevent duplicate posts."""
     hashes = _load_published_hashes()
     hashes.add(content_hash)
-    # Keep last 2000 hashes
     hashes_list = list(hashes)[-2000:]
     with open(PUBLISHED_HASHES, "w") as f:
         json.dump(hashes_list, f)
 
 
 def _content_hash(topic: str, image_prompt: str) -> str:
-    """Generate a hash for content uniqueness check."""
     raw = f"{topic.lower().strip()}|{image_prompt.lower().strip()}"
     return hashlib.md5(raw.encode()).hexdigest()
 
 
 def is_content_unique(topic: str, image_prompt: str) -> bool:
-    """Check if this content has been published before."""
     h = _content_hash(topic, image_prompt)
     return h not in _load_published_hashes()
 
 
 def mark_content_published(topic: str, image_prompt: str):
-    """Mark content as published to prevent future duplicates."""
     h = _content_hash(topic, image_prompt)
     _save_published_hash(h)
 
 
 # ─────────────────────────────────────────────
-# AI IMAGE GENERATION
+# BRANDED TEMPLATE IMAGE GENERATION (Pillow)
 # ─────────────────────────────────────────────
 
-def generate_image(image_prompt: str, style: str = "photorealistic") -> str:
-    """Generate an AI image using OpenAI DALL-E API.
+def generate_branded_image(headline: str, subtext: str = "",
+                           topic: str = "", style_idx: int = None) -> str:
+    """Generate a professional branded image using Pillow.
     
-    Returns the local file path of the saved image, or empty string on failure.
+    Creates a 1080x1080 social media graphic with:
+    - Gradient background
+    - Headline text (large, bold)
+    - Subtext (smaller, supporting)
+    - CFW branding at bottom
+    - Accent decorations
+    
+    Returns local file path or empty string on failure.
     """
     _ensure_dirs()
 
-    # Enhance the prompt for better results
-    enhanced_prompt = _enhance_image_prompt(image_prompt, style)
+    try:
+        from PIL import Image, ImageDraw, ImageFont
 
-    print(f"  [MEDIA] Generating image: {enhanced_prompt[:80]}...", flush=True)
+        # Pick a random style for variety
+        if style_idx is None:
+            style_idx = random.randint(0, len(TEMPLATE_STYLES) - 1)
+        style = TEMPLATE_STYLES[style_idx % len(TEMPLATE_STYLES)]
+
+        W, H = 1080, 1080
+        img = Image.new("RGB", (W, H))
+        draw = ImageDraw.Draw(img)
+
+        # Draw gradient background
+        for y in range(H):
+            ratio = y / H
+            r = int(style["bg_top"][0] * (1 - ratio) + style["bg_bottom"][0] * ratio)
+            g = int(style["bg_top"][1] * (1 - ratio) + style["bg_bottom"][1] * ratio)
+            b = int(style["bg_top"][2] * (1 - ratio) + style["bg_bottom"][2] * ratio)
+            draw.line([(0, y), (W, y)], fill=(r, g, b))
+
+        # Accent decorations — geometric shapes
+        accent = style["accent"]
+        # Top accent bar
+        draw.rectangle([(0, 0), (W, 6)], fill=accent)
+        # Side accent line
+        draw.rectangle([(60, 120), (66, H - 200)], fill=accent)
+        # Bottom accent bar
+        draw.rectangle([(0, H - 6), (W, H)], fill=accent)
+        # Corner accent
+        draw.rectangle([(W - 200, 0), (W, 6)], fill=accent)
+
+        # Try to load a nice font, fall back to default
+        try:
+            font_large = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 52)
+            font_medium = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 32)
+            font_small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
+            font_brand = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+        except Exception:
+            font_large = ImageFont.load_default()
+            font_medium = ImageFont.load_default()
+            font_small = ImageFont.load_default()
+            font_brand = ImageFont.load_default()
+
+        text_color = style["text"]
+
+        # Wrap headline text
+        headline_lines = textwrap.wrap(headline, width=24)
+        if len(headline_lines) > 5:
+            headline_lines = headline_lines[:5]
+            headline_lines[-1] += "..."
+
+        # Draw headline
+        y_pos = 180
+        for line in headline_lines:
+            draw.text((90, y_pos), line, font=font_large, fill=text_color)
+            y_pos += 68
+
+        # Draw accent line under headline
+        y_pos += 20
+        draw.rectangle([(90, y_pos), (400, y_pos + 4)], fill=accent)
+        y_pos += 40
+
+        # Draw subtext
+        if subtext:
+            sub_lines = textwrap.wrap(subtext, width=38)
+            if len(sub_lines) > 4:
+                sub_lines = sub_lines[:4]
+            for line in sub_lines:
+                draw.text((90, y_pos), line, font=font_medium, fill=(200, 200, 200))
+                y_pos += 44
+
+        # Draw topic tag if provided
+        if topic:
+            topic_tag = f"#{topic.replace(' ', '').lower()}"
+            draw.text((90, H - 200), topic_tag, font=font_small, fill=accent)
+
+        # CFW Branding at bottom
+        brand_y = H - 120
+        draw.rectangle([(0, brand_y - 20), (W, H)], fill=(0, 0, 0, 180))
+        draw.rectangle([(0, brand_y - 20), (W, brand_y - 16)], fill=accent)
+
+        draw.text((90, brand_y), "CHICAGO FLEET WRAPS", font=font_brand, fill=text_color)
+        draw.text((90, brand_y + 36), "chicagofleetwraps.com", font=font_small, fill=(180, 180, 180))
+
+        # Phone number on the right
+        draw.text((W - 300, brand_y + 10), "(312) 850-2900", font=font_small, fill=(180, 180, 180))
+
+        # Save
+        timestamp = int(time.time())
+        filepath = os.path.join(MEDIA_DIR, f"cfw_branded_{timestamp}.png")
+        img.save(filepath, "PNG", quality=95)
+        print(f"  [MEDIA] Branded image created: {filepath}", flush=True)
+        _log_generation("branded_image", headline[:200], filepath)
+        return filepath
+
+    except Exception as e:
+        print(f"  [MEDIA] Branded image error: {e}", flush=True)
+        return ""
+
+
+def _generate_image_content(decision: dict) -> tuple:
+    """Use AI to generate compelling headline and subtext for the image.
+    
+    Returns (headline, subtext) tuple.
+    """
+    topic = decision.get("topic", "vehicle wraps")
+    caption = decision.get("caption", "")
+    audience = decision.get("audience", "car enthusiasts")
+
+    try:
+        prompt = f"""Create a social media image headline and subtext for a post about: {topic}
+
+Target audience: {audience}
+Post caption context: {caption[:200]}
+
+Return ONLY valid JSON:
+{{
+    "headline": "A bold, attention-grabbing headline (8-15 words max). Make it punchy and specific.",
+    "subtext": "A supporting line that adds value or a call to action (10-20 words max)."
+}}
+
+RULES:
+- Headline should be bold and specific (not generic)
+- Mention specific vehicles, colors, or services when relevant
+- Sound like a real business, not a marketing agency
+- No emojis
+- Make it feel professional and authoritative"""
+
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.9,
+            max_tokens=150,
+        )
+
+        result = response.choices[0].message.content.strip()
+        if result.startswith("```"):
+            result = result.split("```")[1]
+            if result.startswith("json"):
+                result = result[4:]
+
+        data = json.loads(result.strip())
+        return data.get("headline", topic), data.get("subtext", "")
+
+    except Exception as e:
+        print(f"  [MEDIA] AI headline generation error: {e}", flush=True)
+        # Fallback headlines
+        fallback_headlines = [
+            f"Transform Your Fleet with Premium Wraps",
+            f"Professional Vehicle Wraps in Chicago",
+            f"Your Brand, On Every Vehicle",
+            f"Stand Out on Chicago Streets",
+            f"Premium Vinyl Wraps — Built to Last",
+        ]
+        return random.choice(fallback_headlines), "Chicago Fleet Wraps — Portage Park, IL"
+
+
+# ─────────────────────────────────────────────
+# AI IMAGE GENERATION (DALL-E — optional)
+# ─────────────────────────────────────────────
+
+def generate_ai_image(image_prompt: str, style: str = "photorealistic") -> str:
+    """Try to generate an AI image via DALL-E. Returns filepath or empty string."""
+    _ensure_dirs()
+
+    enhanced_prompt = _enhance_image_prompt(image_prompt, style)
+    print(f"  [MEDIA] Attempting AI image: {enhanced_prompt[:80]}...", flush=True)
 
     try:
         response = client.images.generate(
@@ -101,33 +285,26 @@ def generate_image(image_prompt: str, style: str = "photorealistic") -> str:
 
         image_url = response.data[0].url
         if not image_url:
-            print("  [MEDIA] No image URL returned", flush=True)
             return ""
 
-        # Download the image
         timestamp = int(time.time())
-        filename = f"cfw_post_{timestamp}.png"
-        filepath = os.path.join(MEDIA_DIR, filename)
+        filepath = os.path.join(MEDIA_DIR, f"cfw_ai_{timestamp}.png")
 
         img_response = requests.get(image_url, timeout=60)
         if img_response.status_code == 200:
             with open(filepath, "wb") as f:
                 f.write(img_response.content)
-            print(f"  [MEDIA] Image saved: {filepath}", flush=True)
-            _log_generation("image", enhanced_prompt, filepath)
+            print(f"  [MEDIA] AI image saved: {filepath}", flush=True)
+            _log_generation("ai_image", enhanced_prompt, filepath)
             return filepath
-        else:
-            print(f"  [MEDIA] Download failed: {img_response.status_code}", flush=True)
-            return ""
 
     except Exception as e:
-        print(f"  [MEDIA] Image generation error: {e}", flush=True)
-        # Fallback: try with a simpler prompt
-        return _fallback_image_generation(image_prompt)
+        print(f"  [MEDIA] AI image not available: {e}", flush=True)
+
+    return ""
 
 
 def _enhance_image_prompt(prompt: str, style: str) -> str:
-    """Enhance the image prompt for better AI generation results."""
     style_additions = {
         "photorealistic": "Photorealistic, professional automotive photography, high resolution, 4K quality, natural lighting",
         "dramatic": "Dramatic cinematic lighting, moody atmosphere, professional automotive photography, 4K",
@@ -135,52 +312,42 @@ def _enhance_image_prompt(prompt: str, style: str) -> str:
         "urban": "Urban street photography, city backdrop, natural lighting, candid feel, high quality",
         "action": "Dynamic angle, motion blur background, sharp subject, professional sports photography",
     }
-
     addition = style_additions.get(style, style_additions["photorealistic"])
-
-    # Add Chicago context if not already present
-    chicago_context = ""
-    if "chicago" not in prompt.lower():
-        chicago_context = ", Chicago cityscape in background"
-
-    # Ensure no text/logos in the image (AI struggles with text)
+    chicago_context = "" if "chicago" in prompt.lower() else ", Chicago cityscape in background"
     no_text = ". Do NOT include any text, logos, watermarks, or words in the image."
-
     return f"{prompt}{chicago_context}. {addition}{no_text}"
 
 
-def _fallback_image_generation(original_prompt: str) -> str:
-    """Fallback image generation with a simplified prompt."""
+# ─────────────────────────────────────────────
+# MAIN IMAGE GENERATION (with fallback chain)
+# ─────────────────────────────────────────────
+
+def generate_image(image_prompt: str, style: str = "photorealistic",
+                   decision: dict = None) -> str:
+    """Generate an image using the best available method.
+    
+    Fallback chain:
+    1. Try DALL-E AI generation
+    2. Fall back to branded template image
+    
+    Always returns a valid image path (branded templates never fail).
+    """
     _ensure_dirs()
-    simple_prompt = f"Professional photo of a wrapped vehicle, vinyl car wrap, automotive photography, high quality, no text or logos"
 
-    try:
-        response = client.images.generate(
-            model="dall-e-3",
-            prompt=simple_prompt,
-            size="1024x1024",
-            quality="standard",
-            n=1,
-        )
+    # Try AI image first
+    ai_image = generate_ai_image(image_prompt, style)
+    if ai_image:
+        return ai_image
 
-        image_url = response.data[0].url
-        if not image_url:
-            return ""
+    # Fallback: generate branded template
+    print("  [MEDIA] Using branded template fallback", flush=True)
+    if decision:
+        headline, subtext = _generate_image_content(decision)
+    else:
+        headline = image_prompt[:80] if image_prompt else "Premium Vehicle Wraps"
+        subtext = "Chicago Fleet Wraps — Quality You Can See"
 
-        timestamp = int(time.time())
-        filepath = os.path.join(MEDIA_DIR, f"cfw_fallback_{timestamp}.png")
-
-        img_response = requests.get(image_url, timeout=60)
-        if img_response.status_code == 200:
-            with open(filepath, "wb") as f:
-                f.write(img_response.content)
-            print(f"  [MEDIA] Fallback image saved: {filepath}", flush=True)
-            return filepath
-
-    except Exception as e:
-        print(f"  [MEDIA] Fallback generation also failed: {e}", flush=True)
-
-    return ""
+    return generate_branded_image(headline, subtext, decision.get("topic", "") if decision else "")
 
 
 # ─────────────────────────────────────────────
@@ -188,11 +355,7 @@ def _fallback_image_generation(original_prompt: str) -> str:
 # ─────────────────────────────────────────────
 
 def create_slideshow_video(image_path: str, caption: str, duration: int = 10) -> str:
-    """Create a simple slideshow video from an image for TikTok.
-    
-    Uses ffmpeg to create a video with zoom/pan effect.
-    Returns the video file path, or empty string on failure.
-    """
+    """Create a simple slideshow video from an image for TikTok."""
     _ensure_dirs()
 
     if not image_path or not os.path.exists(image_path):
@@ -205,7 +368,6 @@ def create_slideshow_video(image_path: str, caption: str, duration: int = 10) ->
     try:
         import subprocess
 
-        # Ken Burns effect: slow zoom in over duration
         cmd = [
             "ffmpeg", "-y",
             "-loop", "1",
@@ -238,11 +400,7 @@ def create_slideshow_video(image_path: str, caption: str, duration: int = 10) ->
 # ─────────────────────────────────────────────
 
 def adapt_captions(decision: dict) -> dict:
-    """Take a single content decision and adapt the caption for each platform.
-    
-    Same content, different voice per platform.
-    Returns dict with platform-specific captions and hashtags.
-    """
+    """Adapt caption for each platform. Same content, different voice."""
     base_caption = decision.get("caption", "")
     base_hashtags = decision.get("hashtags", [])
     topic = decision.get("topic", "")
@@ -258,11 +416,11 @@ Return ONLY valid JSON:
 
 {{
     "facebook": {{
-        "caption": "Facebook version — conversational, can be longer, ask a question to spark discussion, informative",
+        "caption": "Facebook version — conversational, longer, ask a question to spark discussion",
         "hashtags": ["3-5 relevant hashtags"]
     }},
     "instagram": {{
-        "caption": "Instagram version — visual-first, engaging, slightly polished but still real",
+        "caption": "Instagram version — visual-first, engaging, polished but real",
         "hashtags": ["15-25 relevant hashtags for reach"]
     }},
     "tiktok": {{
@@ -273,11 +431,7 @@ Return ONLY valid JSON:
 
 RULES:
 - Each platform caption should feel NATIVE to that platform
-- Facebook: longer, discussion-oriented, ask a question
-- Instagram: medium length, visual description, heavy hashtags
-- TikTok: SHORT, punchy, hook-first, trending hashtags
-- All must be about the same topic/content
-- Sound like a real business, not a marketing agency
+- Sound like a real business owner (Roy), not a marketing agency
 - No emojis"""
 
         response = client.chat.completions.create(
@@ -293,12 +447,10 @@ RULES:
             if result.startswith("json"):
                 result = result[4:]
 
-        adapted = json.loads(result.strip())
-        return adapted
+        return json.loads(result.strip())
 
     except Exception as e:
         print(f"  [MEDIA] Caption adaptation error: {e}", flush=True)
-        # Fallback: use the same caption everywhere
         return {
             "facebook": {"caption": base_caption, "hashtags": base_hashtags[:5]},
             "instagram": {"caption": base_caption, "hashtags": base_hashtags},
@@ -313,22 +465,8 @@ RULES:
 def create_content_package(decision: dict) -> dict:
     """Create a complete content package from a brain decision.
     
-    This is the main function called by the master orchestrator.
-    It generates one unique piece of content and packages it for all platforms.
-    
-    Returns:
-    {
-        "image_path": "/path/to/image.png",
-        "video_path": "/path/to/video.mp4" or "",
-        "platforms": {
-            "facebook": {"caption": "...", "hashtags": [...]},
-            "instagram": {"caption": "...", "hashtags": [...]},
-            "tiktok": {"caption": "...", "hashtags": [...]},
-        },
-        "topic": "...",
-        "content_id": "unique_id",
-        "unique": True/False,
-    }
+    Generates one unique piece of content and packages it for all platforms.
+    Always produces at least a branded template image.
     """
     _ensure_dirs()
 
@@ -342,10 +480,8 @@ def create_content_package(decision: dict) -> dict:
 
     content_id = f"content_{int(time.time())}"
 
-    # Step 1: Generate the image
-    image_path = ""
-    if image_prompt:
-        image_path = generate_image(image_prompt)
+    # Step 1: Generate the image (always succeeds with branded fallback)
+    image_path = generate_image(image_prompt, decision=decision)
 
     # Step 2: Create video version for TikTok
     video_path = ""
@@ -369,7 +505,6 @@ def create_content_package(decision: dict) -> dict:
         "generated_at": datetime.now().isoformat(),
     }
 
-    # Log the package
     _log_generation("package", json.dumps(decision)[:300], content_id)
 
     print(f"  [MEDIA] Content package ready: {content_id}", flush=True)
@@ -405,7 +540,8 @@ def _log_generation(media_type: str, prompt: str, output: str):
 
 
 if __name__ == "__main__":
-    # Test image generation
-    test_prompt = "A matte black Tesla Model Y with a vinyl wrap, parked in front of the Chicago Bean sculpture at Millennium Park, golden hour lighting, professional automotive photography"
-    result = generate_image(test_prompt)
+    # Test branded image generation
+    test_headline = "Transform Your Fleet with Premium Matte Black Wraps"
+    test_subtext = "Professional installation. 5-year warranty. Chicago's trusted wrap shop."
+    result = generate_branded_image(test_headline, test_subtext, "fleetwrap")
     print(f"Test result: {result}")

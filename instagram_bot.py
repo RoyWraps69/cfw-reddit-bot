@@ -110,8 +110,15 @@ class InstagramBot:
                 results["status"] = "not_logged_in"
                 return results
 
-            # PHASE 1: Post content
-            if self.posts_today < IG_MAX_POSTS_PER_DAY and generated_image_path:
+            # PHASE 1: Post content (always post — generate branded image if none provided)
+            if self.posts_today < IG_MAX_POSTS_PER_DAY:
+                # If no image provided, generate a branded template
+                if not generated_image_path:
+                    from media_generator import generate_branded_image, _generate_image_content
+                    decision = self.brain.decide_next_post("instagram", trends)
+                    headline, subtext = _generate_image_content(decision)
+                    generated_image_path = generate_branded_image(headline, subtext, decision.get("topic", ""))
+                    print(f"  [IG] Generated branded image: {generated_image_path}", flush=True)
                 post_result = await self._post_content(trends, generated_image_path)
                 if post_result:
                     results["posts"] = 1
@@ -136,12 +143,17 @@ class InstagramBot:
     # POSTING
     # ─────────────────────────────────────────
 
-    async def _post_content(self, trends: dict, image_path: str) -> bool:
+    async def _post_content(self, trends: dict, image_path: str,
+                            override_caption: str = "", override_hashtags: list = None) -> bool:
         """Post content to Instagram feed."""
         try:
-            decision = self.brain.decide_next_post("instagram", trends)
-            caption = decision.get("caption", "")
-            hashtags = decision.get("hashtags", [])
+            if override_caption:
+                caption = override_caption
+                hashtags = override_hashtags or []
+            else:
+                decision = self.brain.decide_next_post("instagram", trends)
+                caption = decision.get("caption", "")
+                hashtags = decision.get("hashtags", [])
 
             # Instagram hashtag strategy: put in caption
             if hashtags:
@@ -458,9 +470,20 @@ Write a comment. ONLY the comment text."""
         async def _do_post():
             await self.start()
             try:
+                # Generate branded image if none provided
+                if not image_path:
+                    from media_generator import generate_branded_image, _generate_image_content
+                    decision = {"topic": "vehicle wraps", "caption": caption}
+                    headline, subtext = _generate_image_content(decision)
+                    gen_image = generate_branded_image(headline, subtext)
+                    print(f"  [IG] Generated branded image: {gen_image}", flush=True)
+                else:
+                    gen_image = image_path
                 result = await self._post_content(
                     trends={"content_ideas": []},
-                    image_path=image_path,
+                    image_path=gen_image,
+                    override_caption=caption,
+                    override_hashtags=hashtags or [],
                 )
                 return {"posted": result, "caption": caption}
             finally:

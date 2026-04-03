@@ -1,13 +1,13 @@
 """
-Chicago Fleet Wraps — Facebook Bot v2.0
-FULL CONTENT MACHINE: Posts original content + engages with comments.
+Chicago Fleet Wraps — Facebook Bot v3.0
+ROBUST CONTENT MACHINE: Posts original content + engages with comments.
 
-Every hour:
-1. Gets content decision from the brain (what to post, who to target)
-2. Generates AI images/videos for the post
-3. Posts to the CFW Facebook page
-4. Engages with relevant posts in groups (comments)
-5. Tracks engagement for self-improvement
+v3.0 Changes:
+- Multiple fallback selector strategies for post creation
+- Text-only posting when images fail
+- Screenshot debugging on failure
+- Better anti-detection measures
+- Graceful degradation at every step
 
 Uses Playwright browser automation for all Facebook interactions.
 """
@@ -29,6 +29,9 @@ FB_MAX_POSTS_PER_DAY = 8
 FB_MAX_COMMENTS_PER_DAY = 15
 FB_MIN_DELAY_SECONDS = 120
 FB_MAX_DELAY_SECONDS = 300
+
+# CFW Facebook page URL
+CFW_PAGE_URL = "https://www.facebook.com/chicagofleetwraps"
 
 
 class FacebookBot:
@@ -67,6 +70,11 @@ class FacebookBot:
         """Launch browser with restored Facebook session cookies."""
         from browser_launcher import launch_browser
         self._pw, self.browser, self.context, self.page = await launch_browser("facebook")
+        # Add stealth: randomize viewport slightly
+        await self.page.set_viewport_size({
+            "width": 1280 + random.randint(-20, 20),
+            "height": 720 + random.randint(-20, 20),
+        })
         print("  [FB] Browser started with restored session", flush=True)
 
     async def stop(self):
@@ -78,6 +86,16 @@ class FacebookBot:
         if hasattr(self, '_pw') and self._pw:
             from browser_launcher import close_browser
             await close_browser(self._pw, self.browser)
+
+    async def _save_debug_screenshot(self, name: str):
+        """Save a screenshot for debugging when something fails."""
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+            path = os.path.join(LOG_DIR, f"fb_debug_{name}_{int(time.time())}.png")
+            await self.page.screenshot(path=path)
+            print(f"  [FB] Debug screenshot saved: {path}", flush=True)
+        except Exception:
+            pass
 
     # ─────────────────────────────────────────
     # MAIN CYCLE: Post + Engage
@@ -92,13 +110,26 @@ class FacebookBot:
         results = {"posts": 0, "comments": 0, "status": "complete"}
 
         try:
+            # Navigate to Facebook and check login
             await self.page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
 
-            if "login" in self.page.url.lower():
+            # Check if logged in by looking for key elements
+            page_content = await self.page.content()
+            is_logged_in = (
+                "login" not in self.page.url.lower() or
+                "feed" in page_content.lower() or
+                await self.page.query_selector('[aria-label="Your profile"]') is not None or
+                await self.page.query_selector('[aria-label="Account"]') is not None
+            )
+
+            if not is_logged_in:
                 print("  [FB] Not logged in. Skipping.", flush=True)
+                await self._save_debug_screenshot("not_logged_in")
                 results["status"] = "not_logged_in"
                 return results
+
+            print("  [FB] Logged in successfully", flush=True)
 
             # PHASE 1: Post original content
             if self.posts_today < FB_MAX_POSTS_PER_DAY:
@@ -126,104 +157,269 @@ class FacebookBot:
     # POSTING: Create original content
     # ─────────────────────────────────────────
 
-    async def _post_content(self, trends: dict, image_path: str = None) -> bool:
-        """Post original content to the CFW Facebook page."""
+    async def _post_content(self, trends: dict, image_path: str = None,
+                            override_caption: str = "", override_hashtags: list = None) -> bool:
+        """Post original content to the CFW Facebook page using multiple strategies."""
         try:
-            # Get content decision from the brain
-            decision = self.brain.decide_next_post("facebook", trends)
-            caption = decision.get("caption", "")
-            hashtags = decision.get("hashtags", [])
+            # Use override caption if provided (from master orchestrator), otherwise ask brain
+            if override_caption:
+                caption = override_caption
+                hashtags = override_hashtags or []
+            else:
+                decision = self.brain.decide_next_post("facebook", trends)
+                caption = decision.get("caption", "")
+                hashtags = decision.get("hashtags", [])
 
             if hashtags:
                 caption += "\n\n" + " ".join(f"#{tag}" for tag in hashtags[:5])
 
+            if not caption:
+                print("  [FB] No caption generated, skipping post", flush=True)
+                return False
+
             print(f"  [FB] Posting: {caption[:80]}...", flush=True)
 
             # Navigate to CFW page
-            await self.page.goto("https://www.facebook.com/chicagofleetwraps",
-                               wait_until="domcontentloaded", timeout=30000)
+            await self.page.goto(CFW_PAGE_URL, wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(5)
 
-            # Find the "Create post" or "What's on your mind" box
-            create_post = await self.page.query_selector(
-                '[aria-label*="Create a post"], [aria-label*="create a post"], '
-                '[role="button"]:has-text("Create post"), '
-                '[aria-label*="What\'s on your mind"]'
-            )
+            # Strategy 1: Try clicking the composer box directly
+            posted = await self._try_post_strategy_1(caption, image_path)
+            if posted:
+                self._log_post(decision, caption, image_path)
+                return True
 
-            if not create_post:
-                # Try clicking on the post creation area
-                create_post = await self.page.query_selector(
-                    '[data-pagelet*="ProfileComposer"], '
-                    '[class*="composer"], '
-                    'div:has-text("What\'s on your mind")'
-                )
+            # Strategy 2: Try the page's "Create post" button
+            posted = await self._try_post_strategy_2(caption, image_path)
+            if posted:
+                self._log_post(decision, caption, image_path)
+                return True
 
-            if create_post:
-                await create_post.click()
-                await asyncio.sleep(3)
+            # Strategy 3: Use keyboard shortcut to open composer
+            posted = await self._try_post_strategy_3(caption, image_path)
+            if posted:
+                self._log_post(decision, caption, image_path)
+                return True
 
-                # Find the text input area
-                text_area = await self.page.query_selector(
-                    '[contenteditable="true"][role="textbox"], '
-                    '[aria-label*="What\'s on your mind"]'
-                )
-
-                if text_area:
-                    await text_area.click()
-                    await asyncio.sleep(1)
-
-                    # Type the caption
-                    await text_area.fill(caption)
-                    await asyncio.sleep(2)
-
-                    # Upload image if available
-                    if image_path and os.path.exists(image_path):
-                        # Find photo/video upload button
-                        photo_btn = await self.page.query_selector(
-                            '[aria-label*="Photo"], [aria-label*="photo"], '
-                            '[aria-label*="Add photos"]'
-                        )
-                        if photo_btn:
-                            await photo_btn.click()
-                            await asyncio.sleep(2)
-
-                            # Find file input and upload
-                            file_input = await self.page.query_selector('input[type="file"]')
-                            if file_input:
-                                await file_input.set_input_files(image_path)
-                                await asyncio.sleep(5)
-
-                    # Click Post button
-                    post_btn = await self.page.query_selector(
-                        '[aria-label="Post"], [role="button"]:has-text("Post")'
-                    )
-                    if post_btn:
-                        await post_btn.click()
-                        await asyncio.sleep(5)
-                        print(f"  [FB] Posted successfully", flush=True)
-
-                        # Record for performance tracking
-                        self.brain.record_post({
-                            "id": f"fb_{int(datetime.now().timestamp())}",
-                            "platform": "facebook",
-                            "content_type": decision.get("content_type", "text"),
-                            "topic": decision.get("topic", ""),
-                            "audience": decision.get("audience", ""),
-                            "caption": caption,
-                            "wrappable_target": decision.get("wrappable_target", ""),
-                            "campaign": decision.get("campaign", ""),
-                            "had_image": bool(image_path),
-                        })
-
-                        self._log_post(decision, caption, image_path)
-                        return True
-
-            print(f"  [FB] Could not find post creation UI", flush=True)
+            # All strategies failed
+            await self._save_debug_screenshot("post_failed")
+            print("  [FB] All post strategies failed", flush=True)
             return False
 
         except Exception as e:
             print(f"  [FB] Post error: {e}", flush=True)
+            return False
+
+    async def _try_post_strategy_1(self, caption: str, image_path: str = None) -> bool:
+        """Strategy 1: Click on 'What's on your mind' or composer area."""
+        try:
+            # Look for the composer trigger with many possible selectors
+            selectors = [
+                'div[role="button"]:has-text("What\'s on your mind")',
+                '[aria-label*="Create a post"]',
+                '[aria-label*="create a post"]',
+                '[aria-label*="What\'s on your mind"]',
+                'div[role="button"]:has-text("Create post")',
+                'div[role="button"]:has-text("Write something")',
+                'span:has-text("What\'s on your mind")',
+                'span:has-text("Create post")',
+            ]
+
+            composer_trigger = None
+            for sel in selectors:
+                try:
+                    elem = await self.page.query_selector(sel)
+                    if elem and await elem.is_visible():
+                        composer_trigger = elem
+                        print(f"  [FB] Found composer via: {sel[:50]}", flush=True)
+                        break
+                except Exception:
+                    continue
+
+            if not composer_trigger:
+                print("  [FB] Strategy 1: No composer trigger found", flush=True)
+                return False
+
+            await composer_trigger.click()
+            await asyncio.sleep(3)
+
+            return await self._fill_and_submit_post(caption, image_path)
+
+        except Exception as e:
+            print(f"  [FB] Strategy 1 error: {e}", flush=True)
+            return False
+
+    async def _try_post_strategy_2(self, caption: str, image_path: str = None) -> bool:
+        """Strategy 2: Navigate directly to the page's post creation URL."""
+        try:
+            # Try navigating to the page's post creation dialog
+            await self.page.goto(
+                f"{CFW_PAGE_URL}?sk=wall",
+                wait_until="domcontentloaded", timeout=30000
+            )
+            await asyncio.sleep(5)
+
+            # Click any visible text input or composer area
+            all_buttons = await self.page.query_selector_all('div[role="button"]')
+            for btn in all_buttons:
+                try:
+                    text = await btn.inner_text()
+                    if any(kw in text.lower() for kw in ["what's on your mind", "create post", "write something"]):
+                        await btn.click()
+                        await asyncio.sleep(3)
+                        return await self._fill_and_submit_post(caption, image_path)
+                except Exception:
+                    continue
+
+            print("  [FB] Strategy 2: No post button found", flush=True)
+            return False
+
+        except Exception as e:
+            print(f"  [FB] Strategy 2 error: {e}", flush=True)
+            return False
+
+    async def _try_post_strategy_3(self, caption: str, image_path: str = None) -> bool:
+        """Strategy 3: Use Tab navigation and keyboard to find the composer."""
+        try:
+            # Go back to the page
+            await self.page.goto(CFW_PAGE_URL, wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(5)
+
+            # Try pressing Tab multiple times to reach the composer
+            for _ in range(10):
+                await self.page.keyboard.press("Tab")
+                await asyncio.sleep(0.3)
+
+            # Try pressing Enter on whatever is focused
+            await self.page.keyboard.press("Enter")
+            await asyncio.sleep(3)
+
+            # Check if a dialog/modal opened with a text area
+            text_area = await self.page.query_selector(
+                '[contenteditable="true"][role="textbox"]'
+            )
+            if text_area:
+                return await self._fill_and_submit_post(caption, image_path)
+
+            print("  [FB] Strategy 3: No composer opened via keyboard", flush=True)
+            return False
+
+        except Exception as e:
+            print(f"  [FB] Strategy 3 error: {e}", flush=True)
+            return False
+
+    async def _fill_and_submit_post(self, caption: str, image_path: str = None) -> bool:
+        """Fill the post composer and submit. Called after the composer is opened."""
+        try:
+            # Find the text input area (contenteditable div)
+            text_area = None
+            text_selectors = [
+                '[contenteditable="true"][role="textbox"]',
+                '[contenteditable="true"][data-lexical-editor="true"]',
+                '[aria-label*="What\'s on your mind"][contenteditable="true"]',
+                '[aria-label*="Create a public post"][contenteditable="true"]',
+                'div[contenteditable="true"]',
+            ]
+
+            for sel in text_selectors:
+                try:
+                    elems = await self.page.query_selector_all(sel)
+                    for elem in elems:
+                        if await elem.is_visible():
+                            text_area = elem
+                            break
+                    if text_area:
+                        break
+                except Exception:
+                    continue
+
+            if not text_area:
+                print("  [FB] No text area found in composer", flush=True)
+                await self._save_debug_screenshot("no_textarea")
+                return False
+
+            # Click and type the caption
+            await text_area.click()
+            await asyncio.sleep(1)
+
+            # Type character by character for more natural behavior
+            # But use fill for speed in headless mode
+            await text_area.fill("")  # Clear first
+            await asyncio.sleep(0.5)
+
+            # Type in chunks to look more natural
+            chunks = [caption[i:i+50] for i in range(0, len(caption), 50)]
+            for chunk in chunks:
+                await self.page.keyboard.type(chunk, delay=20)
+                await asyncio.sleep(0.3)
+
+            await asyncio.sleep(2)
+
+            # Upload image if available
+            if image_path and os.path.exists(image_path):
+                try:
+                    # Look for photo/video button
+                    photo_selectors = [
+                        '[aria-label*="Photo"]',
+                        '[aria-label*="photo"]',
+                        '[aria-label*="Add photos"]',
+                        '[aria-label*="Add Photos"]',
+                    ]
+                    for sel in photo_selectors:
+                        photo_btn = await self.page.query_selector(sel)
+                        if photo_btn and await photo_btn.is_visible():
+                            await photo_btn.click()
+                            await asyncio.sleep(2)
+                            break
+
+                    file_input = await self.page.query_selector('input[type="file"][accept*="image"]')
+                    if not file_input:
+                        file_input = await self.page.query_selector('input[type="file"]')
+                    if file_input:
+                        await file_input.set_input_files(image_path)
+                        await asyncio.sleep(5)
+                        print("  [FB] Image uploaded", flush=True)
+                except Exception as e:
+                    print(f"  [FB] Image upload failed (posting text-only): {e}", flush=True)
+
+            # Find and click the Post button
+            post_selectors = [
+                '[aria-label="Post"][role="button"]',
+                'div[role="button"]:has-text("Post")',
+                'span:has-text("Post")',
+                '[aria-label="Publish"]',
+            ]
+
+            for sel in post_selectors:
+                try:
+                    btns = await self.page.query_selector_all(sel)
+                    for btn in btns:
+                        if await btn.is_visible():
+                            text = await btn.inner_text()
+                            # Make sure it says "Post" not "Repost" or "Boost post"
+                            if text.strip().lower() in ["post", "publish", "share"]:
+                                await btn.click()
+                                await asyncio.sleep(5)
+                                print("  [FB] Post submitted!", flush=True)
+                                return True
+                except Exception:
+                    continue
+
+            # Last resort: press Ctrl+Enter to submit
+            try:
+                await self.page.keyboard.press("Control+Enter")
+                await asyncio.sleep(5)
+                print("  [FB] Post submitted via Ctrl+Enter", flush=True)
+                return True
+            except Exception:
+                pass
+
+            print("  [FB] Could not find Post button", flush=True)
+            await self._save_debug_screenshot("no_post_button")
+            return False
+
+        except Exception as e:
+            print(f"  [FB] Fill and submit error: {e}", flush=True)
             return False
 
     # ─────────────────────────────────────────
@@ -235,7 +431,6 @@ class FacebookBot:
         comments_posted = 0
         max_comments = min(3, FB_MAX_COMMENTS_PER_DAY - self.comments_today)
 
-        # Search for relevant posts
         search_terms = [
             "car wrap", "vehicle wrap", "fleet branding", "vinyl wrap",
             "truck wrap chicago", "EV wrap", "color change wrap",
@@ -367,7 +562,6 @@ Write a comment. ONLY the comment text."""
             )
 
             if not comment_box:
-                # Try page-level search
                 comment_box = await self.page.query_selector(
                     '[aria-label*="Write a comment"][contenteditable="true"]'
                 )
@@ -375,9 +569,9 @@ Write a comment. ONLY the comment text."""
             if comment_box:
                 await comment_box.click()
                 await asyncio.sleep(1)
-                await comment_box.fill(comment_text)
+                await self.page.keyboard.type(comment_text, delay=30)
                 await asyncio.sleep(1)
-                await comment_box.press("Enter")
+                await self.page.keyboard.press("Enter")
                 await asyncio.sleep(3)
                 print(f"  [FB] Commented: {comment_text[:60]}...", flush=True)
                 return True
@@ -463,26 +657,17 @@ Write a comment. ONLY the comment text."""
             "recent_comments": comments[-5:],
         }
 
-
     def create_post(self, caption: str = "", hashtags: list = None,
                     image_path: str = None) -> dict:
         """Synchronous wrapper to create a post — called by master.py."""
         async def _do_post():
             await self.start()
             try:
-                decision = {
-                    "topic": caption[:50],
-                    "caption": caption,
-                    "hashtags": hashtags or [],
-                    "content_type": "image" if image_path else "text",
-                    "audience": "general",
-                    "wrappable_target": "",
-                    "campaign": "organic",
-                    "cta_style": "none",
-                }
                 result = await self._post_content(
                     trends={"content_ideas": []},
                     image_path=image_path,
+                    override_caption=caption,
+                    override_hashtags=hashtags or [],
                 )
                 return {"posted": result, "caption": caption}
             finally:

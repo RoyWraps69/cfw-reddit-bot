@@ -139,12 +139,17 @@ class TikTokBot:
     # POSTING
     # ─────────────────────────────────────────
 
-    async def _post_content(self, trends: dict, video_path: str) -> bool:
+    async def _post_content(self, trends: dict, video_path: str,
+                            override_caption: str = "", override_hashtags: list = None) -> bool:
         """Post video content to TikTok."""
         try:
-            decision = self.brain.decide_next_post("tiktok", trends)
-            caption = decision.get("caption", "")
-            hashtags = decision.get("hashtags", [])
+            if override_caption:
+                caption = override_caption
+                hashtags = override_hashtags or []
+            else:
+                decision = self.brain.decide_next_post("tiktok", trends)
+                caption = decision.get("caption", "")
+                hashtags = decision.get("hashtags", [])
 
             # TikTok: hashtags go in the caption
             if hashtags:
@@ -448,9 +453,21 @@ Write a TikTok comment. ONLY the comment text."""
         async def _do_post():
             await self.start()
             try:
+                # Generate video from branded image if no media provided
+                vid = media_path
+                if not vid or not os.path.exists(str(vid)):
+                    from media_generator import generate_branded_image, _generate_image_content, create_slideshow_video
+                    decision = {"topic": "vehicle wraps", "caption": caption}
+                    headline, subtext = _generate_image_content(decision)
+                    img = generate_branded_image(headline, subtext)
+                    if img:
+                        vid = create_slideshow_video(img, caption)
+                        print(f"  [TT] Generated video from branded image: {vid}", flush=True)
                 result = await self._post_content(
                     trends={"content_ideas": []},
-                    video_path=media_path,
+                    video_path=vid or "",
+                    override_caption=caption,
+                    override_hashtags=hashtags or [],
                 )
                 return {"posted": result, "caption": caption}
             finally:

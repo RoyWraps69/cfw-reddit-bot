@@ -44,7 +44,7 @@ def _get_request_session():
                       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         "Accept": "application/json",
     })
-    print("  [WARN] Using unauthenticated session — may get 403 errors")
+    print(f"  [WARN] Using unauthenticated session — may get 403 errors", flush=True)
     return s
 
 
@@ -85,24 +85,24 @@ def _fetch_reddit_json(url: str, params: dict = None, retries: int = 2) -> dict 
             elif resp.status_code == 429:
                 # Rate limited — back off
                 wait = min(30, 5 * (attempt + 1))
-                print(f"  [RATE LIMIT] Waiting {wait}s...")
+                print(f"  [RATE LIMIT] Waiting {wait}s...", flush=True)
                 time.sleep(wait)
             elif resp.status_code == 403:
-                print(f"  [403] Access denied for {url}")
+                print(f"  [403] Access denied for {url}", flush=True)
                 # If using authenticated session and still 403, try old.reddit.com
                 if _auth_session and "www.reddit.com" in url:
                     alt_url = url.replace("www.reddit.com", "old.reddit.com")
-                    print(f"  [RETRY] Trying old.reddit.com...")
+                    print(f"  [RETRY] Trying old.reddit.com...", flush=True)
                     resp2 = session.get(alt_url, params=params, timeout=10)
                     if resp2.status_code == 200:
                         return resp2.json()
-                    print(f"  [403] old.reddit.com also denied")
+                    print(f"  [403] old.reddit.com also denied", flush=True)
                 return None
             else:
-                print(f"  [HTTP {resp.status_code}] {url}")
+                print(f"  [HTTP {resp.status_code}] {url}", flush=True)
                 time.sleep(2)
         except Exception as e:
-            print(f"  [ERROR] {url}: {e}")
+            print(f"  [ERROR] {url}: {e}", flush=True)
             if attempt < retries:
                 time.sleep(2)
             else:
@@ -256,7 +256,7 @@ def score_warming_thread(t: dict) -> float:
 
 def find_warming_opportunities() -> list[dict]:
     """Find the best threads for account warming — optimized for fast karma building."""
-    print(f"\n  WARMING SCAN — Targeting high-karma subreddits")
+    print(f"\n  WARMING SCAN — Targeting high-karma subreddits", flush=True)
     
     opportunities = []
     
@@ -265,7 +265,7 @@ def find_warming_opportunities() -> list[dict]:
     random.shuffle(subs)
     
     for sub in subs[:10]:  # Scan 10 random warming subs per cycle
-        print(f"  Scanning r/{sub} (warming)...")
+        print(f"  Scanning r/{sub} (warming)...", flush=True)
         
         # Fetch both rising and hot — rising gives the best karma ROI
         posts = []
@@ -297,9 +297,9 @@ def find_warming_opportunities() -> list[dict]:
     # Return more than we need — the bot will pick the top N
     result = opportunities[:WARMING_COMMENTS_PER_CYCLE * 3]
     
-    print(f"\n  Found {len(result)} warming opportunities (top {WARMING_COMMENTS_PER_CYCLE * 3})")
+    print(f"\n  Found {len(result)} warming opportunities (top {WARMING_COMMENTS_PER_CYCLE * 3})", flush=True)
     for t in result[:10]:
-        print(f"    [{t['warming_score']:.0f}] r/{t['subreddit']}: {t['title'][:55]}... (score:{t['score']}, comments:{t['num_comments']})")
+        print(f"    [{t['warming_score']:.0f}] r/{t['subreddit']}: {t['title'][:55]}... (score:{t['score']}, comments:{t['num_comments']})", flush=True)
     
     return result
 
@@ -344,15 +344,15 @@ def find_opportunities(mode: str = "normal") -> list[dict]:
     mode: "warming" for account warming, "normal" for regular operation
     """
     seasonal = get_seasonal_config()
-    print(f"\n{'='*60}")
-    print(f"  SCAN STARTED — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"  Mode: {mode}")
-    print(f"  Season: {seasonal['note']}")
+    print(f"\n{'='*60}", flush=True)
+    print(f"  SCAN STARTED — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+    print(f"  Mode: {mode}", flush=True)
+    print(f"  Season: {seasonal['note']}", flush=True)
     if _auth_session:
-        print(f"  Auth: Using authenticated session")
+        print(f"  Auth: Using authenticated session", flush=True)
     else:
-        print(f"  Auth: WARNING — no authenticated session set!")
-    print(f"{'='*60}\n")
+        print(f"  Auth: WARNING — no authenticated session set!", flush=True)
+    print(f"{'='*60}\n", flush=True)
 
     if mode == "warming":
         return find_warming_opportunities()
@@ -372,7 +372,7 @@ def find_opportunities(mode: str = "normal") -> list[dict]:
     focus_subs = unique_subs
 
     for sub in focus_subs:
-        print(f"  Scanning r/{sub}...")
+        print(f"  Scanning r/{sub}...", flush=True)
 
         # Method 1: Search by keywords (batched for efficiency)
         keyword_threads = search_subreddit(sub, focus_keywords[:9], max_results=10)
@@ -429,9 +429,9 @@ def find_opportunities(mode: str = "normal") -> list[dict]:
 
     scored.sort(key=lambda x: x["opportunity_score"], reverse=True)
 
-    print(f"\n  Found {len(scored)} opportunities")
+    print(f"\n  Found {len(scored)} opportunities", flush=True)
     for t in scored[:10]:
-        print(f"    [{t['opportunity_score']:.0f}] r/{t['subreddit']}: {t['title'][:60]}...")
+        print(f"    [{t['opportunity_score']:.0f}] r/{t['subreddit']}: {t['title'][:60]}...", flush=True)
 
     return scored
 
@@ -439,4 +439,4 @@ def find_opportunities(mode: str = "normal") -> list[dict]:
 if __name__ == "__main__":
     # Test scan
     opps = find_opportunities(mode="warming")
-    print(f"\nTotal warming opportunities found: {len(opps)}")
+    print(f"\nTotal warming opportunities found: {len(opps)}", flush=True)

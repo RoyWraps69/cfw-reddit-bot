@@ -24,7 +24,7 @@ on:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code
@@ -60,6 +60,7 @@ jobs:
           REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
           REDDIT_COOKIES_JSON: ${{ secrets.REDDIT_COOKIES_JSON }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PYTHONUNBUFFERED: '1'
         run: |
           MODE="${{ github.event.inputs.mode || 'auto' }}"
           echo "Running bot in ${MODE} mode..."

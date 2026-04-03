@@ -38,22 +38,22 @@ class RedditSession:
         # Method 1: Load cookies from JSON file
         cookie_file = os.path.join(DATA_DIR, "reddit_cookies.json")
         if os.path.exists(cookie_file):
-            print(f"  [AUTH] Loading cookies from {cookie_file}...")
+            print(f"  [AUTH] Loading cookies from {cookie_file}...", flush=True)
             return self._login_from_cookie_file(cookie_file)
 
         # Method 2: Load cookies from environment variable (for Railway)
         cookies_env = os.environ.get("REDDIT_COOKIES_JSON", "")
         if cookies_env:
-            print(f"  [AUTH] Loading cookies from REDDIT_COOKIES_JSON env var...")
+            print(f"  [AUTH] Loading cookies from REDDIT_COOKIES_JSON env var...", flush=True)
             return self._login_from_cookie_string(cookies_env)
 
         # Method 3: Use token_v2 directly from env var
         token = os.environ.get("REDDIT_TOKEN_V2", "")
         if token:
-            print(f"  [AUTH] Using REDDIT_TOKEN_V2 env var...")
+            print(f"  [AUTH] Using REDDIT_TOKEN_V2 env var...", flush=True)
             return self._login_with_token(token)
 
-        print("  [AUTH] No cookie file, REDDIT_COOKIES_JSON, or REDDIT_TOKEN_V2 found!")
+        print("  [AUTH] No cookie file, REDDIT_COOKIES_JSON, or REDDIT_TOKEN_V2 found!", flush=True)
         return False
 
     def _login_from_cookie_file(self, filepath: str) -> bool:
@@ -63,7 +63,7 @@ class RedditSession:
                 cookies_list = json.load(f)
             return self._apply_cookies(cookies_list)
         except Exception as e:
-            print(f"  [AUTH] Error loading cookie file: {e}")
+            print(f"  [AUTH] Error loading cookie file: {e}", flush=True)
             return False
 
     def _login_from_cookie_string(self, cookies_json: str) -> bool:
@@ -72,7 +72,7 @@ class RedditSession:
             cookies_list = json.loads(cookies_json)
             return self._apply_cookies(cookies_list)
         except Exception as e:
-            print(f"  [AUTH] Error parsing cookie JSON: {e}")
+            print(f"  [AUTH] Error parsing cookie JSON: {e}", flush=True)
             return False
 
     def _login_with_token(self, token: str) -> bool:
@@ -113,7 +113,7 @@ class RedditSession:
                     self._logged_in = True
                     karma = data.get("data", {}).get("comment_karma", 0) + \
                             data.get("data", {}).get("link_karma", 0)
-                    print(f"  [AUTH] Verified! Logged in as u/{name} (karma: {karma})")
+                    print(f"  [AUTH] Verified! Logged in as u/{name} (karma: {karma}, flush=True)")
                     return True
 
             # Try with bearer token if available
@@ -130,14 +130,14 @@ class RedditSession:
                     data = resp.json()
                     if data.get("name"):
                         self._logged_in = True
-                        print(f"  [AUTH] Verified via OAuth! Logged in as u/{data['name']}")
+                        print(f"  [AUTH] Verified via OAuth! Logged in as u/{data['name']}", flush=True)
                         return True
 
-            print("  [AUTH] Could not verify login.")
+            print("  [AUTH] Could not verify login.", flush=True)
             return False
 
         except Exception as e:
-            print(f"  [AUTH] Verification error: {e}")
+            print(f"  [AUTH] Verification error: {e}", flush=True)
             return False
 
     def _ensure_auth(self) -> bool:
@@ -164,7 +164,7 @@ class RedditSession:
         thread_fullname: e.g., 't3_abc123'
         """
         if not self._ensure_auth():
-            print("  [ERROR] Not authenticated, cannot post comment")
+            print("  [ERROR] Not authenticated, cannot post comment", flush=True)
             return False
 
         try:
@@ -185,23 +185,23 @@ class RedditSession:
                 data = resp.json()
                 errors = data.get("json", {}).get("errors", [])
                 if not errors:
-                    print(f"  [SUCCESS] Comment posted to {thread_fullname}")
+                    print(f"  [SUCCESS] Comment posted to {thread_fullname}", flush=True)
                     return True
                 else:
-                    print(f"  [FAILED] Comment errors: {errors}")
+                    print(f"  [FAILED] Comment errors: {errors}", flush=True)
                     for err in errors:
                         if "RATELIMIT" in str(err):
                             nums = re.findall(r'(\d+)\s*minute', str(err))
                             wait_time = int(nums[0]) * 60 + 30 if nums else 600
-                            print(f"  [RATELIMIT] Waiting {wait_time} seconds...")
+                            print(f"  [RATELIMIT] Waiting {wait_time} seconds...", flush=True)
                             time.sleep(wait_time)
                     return False
             else:
-                print(f"  [FAILED] Comment post status: {resp.status_code}")
+                print(f"  [FAILED] Comment post status: {resp.status_code}", flush=True)
                 return False
 
         except Exception as e:
-            print(f"  [ERROR] Comment posting error: {e}")
+            print(f"  [ERROR] Comment posting error: {e}", flush=True)
             return False
 
     def send_dm(self, to_user: str, subject: str, message: str) -> bool:
@@ -227,15 +227,15 @@ class RedditSession:
                 data = resp.json()
                 errors = data.get("json", {}).get("errors", [])
                 if not errors:
-                    print(f"  [SUCCESS] DM sent to u/{to_user}")
+                    print(f"  [SUCCESS] DM sent to u/{to_user}", flush=True)
                     return True
                 else:
-                    print(f"  [FAILED] DM errors: {errors}")
+                    print(f"  [FAILED] DM errors: {errors}", flush=True)
                     return False
             return False
 
         except Exception as e:
-            print(f"  [ERROR] DM error: {e}")
+            print(f"  [ERROR] DM error: {e}", flush=True)
             return False
 
     def create_thread(self, subreddit: str, title: str, body: str) -> bool:
@@ -264,15 +264,15 @@ class RedditSession:
                 errors = data.get("json", {}).get("errors", [])
                 if not errors:
                     url = data.get("json", {}).get("data", {}).get("url", "")
-                    print(f"  [SUCCESS] Thread created: {url}")
+                    print(f"  [SUCCESS] Thread created: {url}", flush=True)
                     return True
                 else:
-                    print(f"  [FAILED] Thread errors: {errors}")
+                    print(f"  [FAILED] Thread errors: {errors}", flush=True)
                     return False
             return False
 
         except Exception as e:
-            print(f"  [ERROR] Thread creation error: {e}")
+            print(f"  [ERROR] Thread creation error: {e}", flush=True)
             return False
 
     def get_my_comments(self, limit: int = 25) -> list:
@@ -301,7 +301,7 @@ class RedditSession:
             return []
 
         except Exception as e:
-            print(f"  [ERROR] Failed to fetch comments: {e}")
+            print(f"  [ERROR] Failed to fetch comments: {e}", flush=True)
             return []
 
     def get_comment_replies(self, comment_permalink: str) -> list:
@@ -325,7 +325,7 @@ class RedditSession:
             return []
 
         except Exception as e:
-            print(f"  [ERROR] Failed to fetch replies: {e}")
+            print(f"  [ERROR] Failed to fetch replies: {e}", flush=True)
             return []
 
     def get_karma(self) -> int:
@@ -343,5 +343,5 @@ class RedditSession:
             return 0
 
         except Exception as e:
-            print(f"  [ERROR] Failed to get karma: {e}")
+            print(f"  [ERROR] Failed to get karma: {e}", flush=True)
             return 0

@@ -11,7 +11,7 @@ from config import MIN_DELAY_BETWEEN_COMMENTS, MAX_DELAY_BETWEEN_COMMENTS
 def random_delay():
     """Wait a random amount of time between actions to appear human."""
     delay = random.randint(MIN_DELAY_BETWEEN_COMMENTS, MAX_DELAY_BETWEEN_COMMENTS)
-    print(f"  [DELAY] Waiting {delay} seconds before next action...")
+    print(f"  [DELAY] Waiting {delay} seconds before next action...", flush=True)
     time.sleep(delay)
 
 

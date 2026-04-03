@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Chicago Fleet Wraps Reddit Bot v2.0 -- Main Orchestrator
+Chicago Fleet Wraps Reddit Bot v2.1 -- Main Orchestrator
 Optimized for faster warming, smarter scanning, and maximum efficiency.
+All print statements use flush=True for GitHub Actions visibility.
 
 Usage:
   python bot.py                  # Full auto run
@@ -48,13 +49,15 @@ from tracker import (
 
 
 def log(msg: str):
-    """Print a timestamped log message."""
+    """Print a timestamped log message with flush for GitHub Actions."""
     ts = datetime.now().strftime("%H:%M:%S")
-    print(f"  [{ts}] {msg}")
+    print(f"  [{ts}] {msg}", flush=True)
 
 
 def random_delay(min_s: int = None, max_s: int = None):
-    """Wait a random amount of time between actions to appear human."""
+    """Wait a random amount of time between actions to appear human.
+    v2.1: Reduced warming delays for faster karma building.
+    """
     min_s = min_s or MIN_DELAY_BETWEEN_COMMENTS
     max_s = max_s or MAX_DELAY_BETWEEN_COMMENTS
     delay = random.randint(min_s, max_s)
@@ -74,13 +77,17 @@ def get_reddit_session() -> RedditSession:
 def run_warming_cycle(rs: RedditSession):
     """Run account warming: post casual comments in high-traffic subreddits.
     
-    v2.0 optimizations:
-    - Posts up to 5 comments per cycle (was 2)
+    v2.1 optimizations:
+    - Posts up to 5 comments per cycle
     - Targets rising/hot threads for maximum visibility
     - Uses varied personas and styles for natural-looking comments
     - Scores threads by karma potential
+    - Reduced delays between warming comments (30-90s instead of 60-180s)
+    - Better logging for GitHub Actions visibility
     """
-    log("Starting WARMING cycle (v2.0 -- accelerated)...")
+    log("=" * 50)
+    log("WARMING CYCLE v2.1 (accelerated)")
+    log("=" * 50)
 
     karma = rs.get_karma()
     log(f"Current karma: {karma} (threshold: {WARMING_KARMA_THRESHOLD})")
@@ -109,15 +116,18 @@ def run_warming_cycle(rs: RedditSession):
     comments_to_post = min(WARMING_COMMENTS_PER_CYCLE, remaining)
     log(f"Target: {comments_to_post} warming comments this cycle ({today_comments} posted today)")
 
+    log("Scanning for warming opportunities...")
     opportunities = find_opportunities(mode="warming")
     if not opportunities:
         log("No warming opportunities found this cycle.")
         return
 
+    log(f"Found {len(opportunities)} warming opportunities. Starting to post...")
+
     comments_posted = 0
     subs_used = set()
 
-    for thread in opportunities:
+    for i, thread in enumerate(opportunities):
         if comments_posted >= comments_to_post:
             break
 
@@ -127,31 +137,47 @@ def run_warming_cycle(rs: RedditSession):
             continue
 
         if not can_comment_in_sub(sub):
+            log(f"  Skipping r/{sub} (already commented today)")
             continue
 
-        log(f"Warming: r/{sub} -- {thread['title'][:55]}... (score:{thread['score']}, comments:{thread['num_comments']})")
+        log(f"")
+        log(f"--- Warming Comment {comments_posted + 1}/{comments_to_post} ---")
+        log(f"  Sub: r/{sub}")
+        log(f"  Title: {thread['title'][:70]}...")
+        log(f"  Score: {thread.get('score', 0)} | Comments: {thread['num_comments']}")
 
         try:
+            log(f"  Generating warming comment...")
             comment = generate_warming_comment(thread["title"], thread["body"], sub)
-            log(f"  Generated ({len(comment)} chars): \"{comment[:80]}...\"")
+            log(f"  Generated ({len(comment)} chars): \"{comment[:100]}...\"")
 
+            log(f"  Posting to r/{sub}...")
             success = post_comment(rs, thread["id"], comment)
             if success:
                 record_comment(sub, thread["id"], is_promo=False, comment_text=comment)
                 save_posted_thread(thread["id"])
                 comments_posted += 1
                 subs_used.add(sub)
-                log(f"  Posted! ({comments_posted}/{comments_to_post})")
+                log(f"  POSTED! ({comments_posted}/{comments_to_post})")
             else:
                 log("  Failed to post. Moving on.")
         except Exception as e:
             log(f"  Error: {e}")
 
-        # Shorter delays during warming (60-180s) -- still human-like
-        random_delay(60, 180)
+        # v2.1: Shorter delays during warming (30-90s) for faster karma building
+        # Still human-like but more aggressive than v2.0
+        if comments_posted < comments_to_post:
+            delay = random.randint(30, 90)
+            log(f"  Waiting {delay}s before next comment...")
+            time.sleep(delay)
 
-    log(f"Warming cycle complete. Posted {comments_posted} comments.")
-    print(get_daily_summary())
+    log(f"")
+    log(f"=" * 50)
+    log(f"WARMING CYCLE COMPLETE")
+    log(f"  Comments posted: {comments_posted}/{comments_to_post}")
+    log(f"  Subreddits used: {', '.join(subs_used) if subs_used else 'none'}")
+    log(f"=" * 50)
+    print(get_daily_summary(), flush=True)
 
 
 def run_normal_cycle(rs: RedditSession):
@@ -232,7 +258,7 @@ def run_normal_cycle(rs: RedditSession):
         random_delay()
 
     log(f"Normal cycle complete. Posted {comments_posted} comments.")
-    print(get_daily_summary())
+    print(get_daily_summary(), flush=True)
 
 
 def run_dm_followup(rs: RedditSession):
@@ -363,40 +389,40 @@ def run_scan_only():
         else:
             sample_comment = "(would skip)"
 
-        print(f"\n{'='*60}")
-        print(f"  #{i} | Score: {thread.get('opportunity_score', 0)}")
-        print(f"  Sub: r/{thread['subreddit']}")
-        print(f"  Title: {thread['title'][:70]}")
-        print(f"  Comments: {thread['num_comments']} | Category: {category} | Confidence: {confidence}")
-        print(f"  Mention CFW: {'YES' if mention else 'no'}")
-        print(f"  URL: {thread['url']}")
-        print(f"  Sample response: \"{sample_comment[:150]}...\"")
+        print(f"\n{'='*60}", flush=True)
+        print(f"  #{i} | Score: {thread.get('opportunity_score', 0)}", flush=True)
+        print(f"  Sub: r/{thread['subreddit']}", flush=True)
+        print(f"  Title: {thread['title'][:70]}", flush=True)
+        print(f"  Comments: {thread['num_comments']} | Category: {category} | Confidence: {confidence}", flush=True)
+        print(f"  Mention CFW: {'YES' if mention else 'no'}", flush=True)
+        print(f"  URL: {thread['url']}", flush=True)
+        print(f"  Sample response: \"{sample_comment[:150]}...\"", flush=True)
 
     log("Dry run complete.")
 
 
 def main():
     """Main entry point."""
-    print(f"\n{'='*60}")
-    print(f"  CHICAGO FLEET WRAPS -- REDDIT BOT v2.0")
-    print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"{'='*60}\n")
+    print(f"\n{'='*60}", flush=True)
+    print(f"  CHICAGO FLEET WRAPS -- REDDIT BOT v2.1", flush=True)
+    print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+    print(f"{'='*60}\n", flush=True)
 
     mode = sys.argv[1] if len(sys.argv) > 1 else "auto"
+    log(f"Mode: {mode}")
 
     if mode == "scan-only":
-        # Even scan-only needs auth to avoid 403 on datacenter IPs
         rs = get_reddit_session()
         set_scanner_session(rs)
         run_scan_only()
         return
 
     if mode == "status":
-        print(get_daily_summary())
+        print(get_daily_summary(), flush=True)
         return
 
     rs = get_reddit_session()
-    set_scanner_session(rs)  # Scanner uses auth session to avoid 403
+    set_scanner_session(rs)
     karma = rs.get_karma()
     log(f"Current karma: {karma}")
 
@@ -417,10 +443,10 @@ def main():
             if random.random() < 0.15:
                 run_thread_creation(rs)
     else:
-        print(f"  Unknown mode: {mode}")
-        print("  Available: auto, warming, scan-only, create-thread, dm-check, status")
+        print(f"  Unknown mode: {mode}", flush=True)
+        print("  Available: auto, warming, scan-only, create-thread, dm-check, status", flush=True)
 
-    print("\n" + get_daily_summary())
+    print("\n" + get_daily_summary(), flush=True)
 
 
 if __name__ == "__main__":

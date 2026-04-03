@@ -476,6 +476,59 @@ Write a comment. ONLY the comment text."""
         }
 
 
+    def create_post(self, caption: str = "", hashtags: list = None,
+                    image_path: str = None) -> dict:
+        """Synchronous wrapper to create a post — called by master.py."""
+        async def _do_post():
+            await self.start()
+            try:
+                decision = {
+                    "topic": caption[:50],
+                    "caption": caption,
+                    "hashtags": hashtags or [],
+                    "content_type": "image" if image_path else "text",
+                    "audience": "general",
+                    "wrappable_target": "",
+                    "campaign": "organic",
+                    "cta_style": "none",
+                }
+                result = await self._post_content(
+                    trends={"content_ideas": []},
+                    image_path=image_path,
+                )
+                return {"posted": result, "caption": caption}
+            finally:
+                await self.stop()
+
+        try:
+            return asyncio.run(_do_post())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(_do_post())
+            finally:
+                loop.close()
+
+    def engage_with_posts(self, max_comments: int = 3) -> dict:
+        """Synchronous wrapper to engage with posts — called by master.py."""
+        async def _do_engage():
+            await self.start()
+            try:
+                count = await self._engage_with_posts(trends={})
+                return {"status": "completed", "comments_posted": count}
+            finally:
+                await self.stop()
+
+        try:
+            return asyncio.run(_do_engage())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(_do_engage())
+            finally:
+                loop.close()
+
+
 async def run_facebook_cycle(trends: dict = None, image_path: str = None):
     bot = FacebookBot()
     try:

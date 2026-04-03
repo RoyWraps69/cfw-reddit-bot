@@ -637,6 +637,20 @@ RULES:
             return high[0]
         return random.choice(ideas)
 
+    def analyze_all(self) -> dict:
+        """Synchronous wrapper for run_full_analysis() — called by master.py."""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    result = pool.submit(asyncio.run, self.run_full_analysis()).result()
+                return result
+            else:
+                return loop.run_until_complete(self.run_full_analysis())
+        except RuntimeError:
+            return asyncio.run(self.run_full_analysis())
+
     def get_dashboard_data(self) -> dict:
         """Get trend data for the dashboard."""
         return {

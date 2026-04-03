@@ -151,11 +151,13 @@ def _render_html(data: dict) -> str:
     # Best Reddit comments
     best_comments_html = ""
     for c in reddit.get("best_comments", []):
+        link = c.get('url', c.get('permalink', ''))
+        link_html = f'<a href="{link}" target="_blank" style="color:#4caf50;text-decoration:none;font-size:11px;">View on Reddit ↗</a>' if link else ''
         best_comments_html += f"""
         <div class="comment-card good">
             <div class="comment-score">+{c.get('score', 0)}</div>
             <div class="comment-body">
-                <div class="comment-sub">r/{c.get('sub', '?')}</div>
+                <div class="comment-sub">r/{c.get('sub', '?')} {link_html}</div>
                 <div class="comment-text">{_escape(c.get('preview', '')[:120])}</div>
                 <div class="comment-meta">{c.get('word_count', 0)} words</div>
             </div>
@@ -163,11 +165,13 @@ def _render_html(data: dict) -> str:
 
     worst_comments_html = ""
     for c in reddit.get("worst_comments", []):
+        link = c.get('url', c.get('permalink', ''))
+        link_html = f'<a href="{link}" target="_blank" style="color:#f44336;text-decoration:none;font-size:11px;">View on Reddit ↗</a>' if link else ''
         worst_comments_html += f"""
         <div class="comment-card bad">
             <div class="comment-score">{c.get('score', 0)}</div>
             <div class="comment-body">
-                <div class="comment-sub">r/{c.get('sub', '?')}</div>
+                <div class="comment-sub">r/{c.get('sub', '?')} {link_html}</div>
                 <div class="comment-text">{_escape(c.get('preview', '')[:120])}</div>
                 <div class="comment-meta">{c.get('word_count', 0)} words</div>
             </div>
@@ -408,6 +412,12 @@ tr:hover {{ background: #16213e; }}
     {damage_html if damage_html else '<p style="color:#666;">No damage incidents. All posts performing well.</p>'}
 </div>
 
+<!-- Recent Activity Feed -->
+<div class="section">
+    <h2>Recent Activity Feed (All Platforms)</h2>
+    {_build_activity_feed(data)}
+</div>
+
 <!-- Recent Cycles -->
 <div class="section">
     <h2>Recent Orchestrator Cycles</h2>
@@ -472,6 +482,146 @@ new Chart(document.getElementById('platformChart'), {{
 
 </body>
 </html>"""
+
+
+def _build_activity_feed(data: dict) -> str:
+    """Build a unified activity feed showing all recent posts/comments with clickable links."""
+    activities = []
+
+    # Reddit comments
+    comment_history = _load_json(os.path.join(DATA_DIR, "comment_history.json"), [])
+    for c in comment_history[-15:]:
+        url = c.get("url", c.get("permalink", ""))
+        if not url and c.get("thread_id"):
+            url = f"https://www.reddit.com/comments/{c['thread_id']}"
+        activities.append({
+            "platform": "reddit",
+            "type": "comment",
+            "text": c.get("comment", c.get("text", ""))[:100],
+            "sub": c.get("subreddit", c.get("sub", "")),
+            "url": url,
+            "time": c.get("posted_at", c.get("timestamp", "")),
+            "score": c.get("score", "-"),
+        })
+
+    # Reddit replies
+    replies = _load_json(os.path.join(DATA_DIR, "replies_sent.json"), [])
+    for r in replies[-10:]:
+        activities.append({
+            "platform": "reddit",
+            "type": "reply",
+            "text": r.get("reply", "")[:100],
+            "sub": r.get("subreddit", ""),
+            "url": r.get("url", ""),
+            "time": r.get("replied_at", ""),
+            "score": "-",
+        })
+
+    # Facebook posts & comments
+    fb_posts = _load_json(os.path.join(DATA_DIR, "fb_post_history.json"), [])
+    for p in fb_posts[-10:]:
+        activities.append({
+            "platform": "facebook",
+            "type": "post",
+            "text": p.get("caption", "")[:100],
+            "sub": "Page",
+            "url": p.get("url", ""),
+            "time": p.get("posted_at", ""),
+            "score": p.get("likes", "-"),
+        })
+    fb_comments = _load_json(os.path.join(DATA_DIR, "fb_comment_history.json"), [])
+    for c in fb_comments[-10:]:
+        activities.append({
+            "platform": "facebook",
+            "type": "comment",
+            "text": c.get("comment", "")[:100],
+            "sub": c.get("group", "Feed"),
+            "url": c.get("url", ""),
+            "time": c.get("posted_at", ""),
+            "score": "-",
+        })
+
+    # Instagram posts & comments
+    ig_posts = _load_json(os.path.join(DATA_DIR, "ig_post_history.json"), [])
+    for p in ig_posts[-10:]:
+        activities.append({
+            "platform": "instagram",
+            "type": "post",
+            "text": p.get("caption", "")[:100],
+            "sub": "Feed",
+            "url": p.get("url", ""),
+            "time": p.get("posted_at", ""),
+            "score": p.get("likes", "-"),
+        })
+    ig_comments = _load_json(os.path.join(DATA_DIR, "ig_comment_history.json"), [])
+    for c in ig_comments[-10:]:
+        activities.append({
+            "platform": "instagram",
+            "type": "comment",
+            "text": c.get("comment", "")[:100],
+            "sub": c.get("hashtag", "Feed"),
+            "url": c.get("url", ""),
+            "time": c.get("posted_at", ""),
+            "score": "-",
+        })
+
+    # TikTok posts & comments
+    tt_posts = _load_json(os.path.join(DATA_DIR, "tt_post_history.json"), [])
+    for p in tt_posts[-10:]:
+        activities.append({
+            "platform": "tiktok",
+            "type": "post",
+            "text": p.get("caption", "")[:100],
+            "sub": "Feed",
+            "url": p.get("url", ""),
+            "time": p.get("posted_at", ""),
+            "score": p.get("likes", "-"),
+        })
+    tt_comments = _load_json(os.path.join(DATA_DIR, "tt_comment_history.json"), [])
+    for c in tt_comments[-10:]:
+        activities.append({
+            "platform": "tiktok",
+            "type": "comment",
+            "text": c.get("comment", "")[:100],
+            "sub": c.get("search_term", "Feed"),
+            "url": c.get("url", ""),
+            "time": c.get("posted_at", ""),
+            "score": "-",
+        })
+
+    # Sort by time (most recent first)
+    activities.sort(key=lambda x: x.get("time", ""), reverse=True)
+    activities = activities[:25]  # Show last 25
+
+    if not activities:
+        return '<p style="color:#666;">No activity recorded yet. Data will appear after the first cycle.</p>'
+
+    platform_colors = {
+        "reddit": "#ff4500", "facebook": "#1877f2",
+        "instagram": "#e1306c", "tiktok": "#00f2ea",
+    }
+    type_icons = {"post": "NEW POST", "comment": "COMMENT", "reply": "REPLY"}
+
+    html = '<div style="max-height:500px;overflow-y:auto;">'
+    for a in activities:
+        color = platform_colors.get(a["platform"], "#888")
+        icon = type_icons.get(a["type"], "")
+        url = a.get("url", "")
+        link = f'<a href="{url}" target="_blank" style="color:{color};text-decoration:none;margin-left:8px;">View \u2197</a>' if url else ''
+        time_str = a.get("time", "")[:16]
+        score_str = f' | Score: {a["score"]}' if a.get("score") and a["score"] != "-" else ''
+
+        html += f"""
+        <div style="display:flex;gap:10px;padding:8px 12px;margin:4px 0;background:#1a1a2e;border-radius:6px;border-left:3px solid {color};align-items:center;font-size:12px;">
+            <span style="background:{color};color:#fff;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:bold;min-width:60px;text-align:center;">{a['platform'].upper()}</span>
+            <span style="color:#888;min-width:70px;">{icon}</span>
+            <span style="color:#ccc;flex:1;">{_escape(a['text'])}</span>
+            <span style="color:#888;font-size:11px;">{a.get('sub', '')}{score_str}</span>
+            <span style="color:#666;font-size:10px;">{time_str}</span>
+            {link}
+        </div>"""
+    html += '</div>'
+    return html
 
 
 def _escape(text: str) -> str:

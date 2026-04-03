@@ -609,6 +609,168 @@ RULES:
             }
 
     # ─────────────────────────────────────────
+    # MASTER ORCHESTRATOR INTERFACE
+    # ─────────────────────────────────────────
+
+    def decide_content(self, trends: dict = None, cross_platform_recs: dict = None,
+                       avoid_topics: list = None) -> dict:
+        """Main entry point called by master.py to decide what to post across ALL platforms.
+        
+        Returns a unified content decision that gets posted to FB, IG, and TikTok simultaneously.
+        Uses CFW's authentic voice — not corporate marketing speak.
+        """
+        # Merge avoid topics from damage control with strategy avoid topics
+        all_avoid = list(set(
+            (avoid_topics or []) + self.strategy.get("avoid_topics", [])
+        ))
+
+        # Review and pivot based on recent performance
+        self.review_and_pivot()
+
+        # Get platform-specific decisions and merge into one unified decision
+        # Pick the platform with the best cross-platform recommendation as primary
+        primary_platform = "instagram"  # Default
+        if cross_platform_recs:
+            for plat in ["instagram", "facebook", "tiktok"]:
+                recs = cross_platform_recs.get(plat, {})
+                if recs.get("amplify"):
+                    primary_platform = plat
+                    break
+
+        # Get the core decision
+        decision = self.decide_next_post(primary_platform, trends)
+        if not decision:
+            return {}
+
+        # Inject cross-platform intelligence
+        if cross_platform_recs:
+            decision["cross_platform_recs"] = cross_platform_recs
+
+        # Inject avoid topics
+        decision["avoid_topics"] = all_avoid
+
+        # Ensure CFW voice in the caption
+        decision = self._ensure_cfw_voice(decision)
+
+        return decision
+
+    def decide_replacement(self, failed_topic: str = "", failed_platform: str = "",
+                           failure_details: dict = None) -> dict:
+        """Decide replacement content when a post gets deleted for negative reactions.
+        
+        Called by master.py damage control phase.
+        """
+        # Add the failed topic to avoid list
+        if failed_topic:
+            if failed_topic not in self.strategy.get("avoid_topics", []):
+                self.strategy.setdefault("avoid_topics", []).append(failed_topic)
+                self._save_all()
+
+        # Generate a safe replacement
+        safe_targets = ["personal_vehicles", "electric_vehicles", "commercial_fleets"]
+        fresh_target = self._get_fresh_wrappable_target([failed_topic])
+
+        # Use a proven campaign
+        campaign = self._get_relevant_campaign()
+
+        prompt = f"""You are Chicago Fleet Wraps. A previous post about \"{failed_topic}\" on {failed_platform} \
+got negative reactions and was deleted.
+
+Failure details: {json.dumps(failure_details or {})}
+
+Create a SAFE replacement post that:
+1. Avoids anything controversial or similar to the failed topic
+2. Focuses on something universally positive about vehicle wraps
+3. Uses CFW's authentic voice — we're a real Chicago shop, not a marketing agency
+4. Features: {fresh_target.get('item', 'vehicle')} with angle: {fresh_target.get('angle', 'custom look')}
+
+Return ONLY valid JSON:
+{{{{
+    "topic": "safe topic",
+    "caption": "the caption in CFW voice",
+    "image_prompt": "detailed photorealistic image prompt",
+    "content_type": "image",
+    "audience": "target audience",
+    "wrappable_target": "{fresh_target.get('category', 'personal_vehicles')}",
+    "campaign": "{campaign.get('name', 'organic')}",
+    "hashtags": ["relevant", "hashtags"],
+    "reasoning": "why this is safe and will perform well",
+    "cta_style": "none"
+}}}}"""
+
+        try:
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7,
+                max_tokens=600,
+            )
+            result = response.choices[0].message.content.strip()
+            if result.startswith("```"):
+                result = result.split("```")[1]
+                if result.startswith("json"):
+                    result = result[4:]
+            return json.loads(result.strip())
+        except Exception as e:
+            print(f"  [BRAIN] Replacement decision error: {e}", flush=True)
+            return {
+                "topic": f"{fresh_target.get('item', 'vehicle')} wrap",
+                "caption": f"Clean wrap, clean look. {fresh_target.get('angle', 'Custom style')} done right.",
+                "image_prompt": f"Photorealistic image of a {fresh_target.get('item', 'car')} with a satin finish vinyl wrap in deep blue, parked on a Chicago street, golden hour, cinematic",
+                "content_type": "image",
+                "audience": "car_enthusiasts",
+                "wrappable_target": fresh_target.get("category", "personal_vehicles"),
+                "campaign": "organic",
+                "hashtags": ["carwrap", "vinylwrap", "chicago", "chicagofleetwraps"],
+                "cta_style": "none",
+            }
+
+    def _ensure_cfw_voice(self, decision: dict) -> dict:
+        """Make sure the caption sounds like CFW — a real Chicago wrap shop, not a marketing bot."""
+        caption = decision.get("caption", "")
+        if not caption:
+            return decision
+
+        # Check for corporate-sounding phrases and rewrite if needed
+        corporate_flags = [
+            "we are proud", "we're excited to announce", "our team of experts",
+            "industry-leading", "state-of-the-art", "don't hesitate to",
+            "reach out today", "contact us now", "limited time offer",
+            "act now", "click the link", "visit our website",
+        ]
+
+        needs_rewrite = any(flag in caption.lower() for flag in corporate_flags)
+        if not needs_rewrite:
+            return decision
+
+        try:
+            rewrite_prompt = f"""Rewrite this social media caption to sound like a REAL Chicago vehicle wrap shop owner \
+talking to car people. Not corporate. Not salesy. Just a guy who loves wraps sharing cool stuff.
+
+Original: {caption}
+
+Rules:
+- Sound like a real person, not a brand
+- Chicago personality — direct, no BS, maybe a little humor
+- No "click the link" or "contact us" or "limited time"
+- Keep it under 200 characters for TikTok compatibility
+- If there's a call to action, make it natural like "DM if you want details"
+
+Return ONLY the rewritten caption, nothing else."""
+
+            response = client.chat.completions.create(
+                model=OPENAI_MODEL,
+                messages=[{"role": "user", "content": rewrite_prompt}],
+                temperature=0.8,
+                max_tokens=200,
+            )
+            decision["caption"] = response.choices[0].message.content.strip().strip('"')
+        except Exception:
+            pass
+
+        return decision
+
+    # ─────────────────────────────────────────
     # ENGAGEMENT TASK FORCE: Comment Strategy
     # ─────────────────────────────────────────
 

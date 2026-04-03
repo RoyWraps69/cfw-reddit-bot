@@ -302,6 +302,16 @@ def _render_html(data: dict) -> str:
             </div>
         </div>"""
 
+    # Quick Post queue picker items
+    qp_queue_items = ""
+    for i, post in enumerate(queue):
+        topic = post.get("decision", {}).get("topic", "Untitled")
+        image_url = post.get("image_url", "")
+        qp_img = f'<img src="{image_url}" alt="{_escape(topic)}" loading="lazy">' if image_url else '<div style="height:100px;background:#2a2a4a;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#666;font-size:11px;">No Image</div>'
+        qp_queue_items += f'<div class="qp-queue-item" id="qp-item-{i}" onclick="selectQueueItem({i})">{qp_img}<div class="title">#{i+1}: {_escape(topic[:40])}</div></div>'
+    if not queue:
+        qp_queue_items = '<p style="color:#666;">Queue is empty. Click Refill Queue below to generate new content.</p>'
+
     # ═══════════════════════════════════════════════════════════
     # POSTING SCHEDULE SECTION
     # ═══════════════════════════════════════════════════════════
@@ -504,6 +514,37 @@ tr:hover {{ background: #16213e; }}
 .hook-item {{ border-left: 3px solid #ffd700; color: #ddd; }}
 .question-item {{ border-left: 3px solid #e1306c; color: #ddd; }}
 
+/* Quick Post */
+.quickpost-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
+.quickpost-panel {{ background: #1a1a2e; border-radius: 12px; padding: 24px; border: 1px solid #2a2a4a; }}
+.quickpost-panel h3 {{ color: #4caf50; margin-bottom: 16px; font-size: 18px; }}
+.quickpost-panel.custom h3 {{ color: #ffd700; }}
+.qp-textarea {{ width: 100%; min-height: 120px; background: #0a0a0f; border: 1px solid #2a2a4a; border-radius: 8px; color: #e0e0e0; padding: 12px; font-size: 14px; font-family: inherit; resize: vertical; }}
+.qp-textarea:focus {{ outline: none; border-color: #4caf50; }}
+.qp-input {{ width: 100%; background: #0a0a0f; border: 1px solid #2a2a4a; border-radius: 8px; color: #e0e0e0; padding: 10px 12px; font-size: 14px; font-family: inherit; margin-bottom: 10px; }}
+.qp-input:focus {{ outline: none; border-color: #ffd700; }}
+.qp-btn {{ padding: 12px 24px; border-radius: 8px; border: none; font-size: 14px; font-weight: 700; cursor: pointer; transition: all 0.2s; text-transform: uppercase; letter-spacing: 1px; }}
+.qp-btn:hover {{ transform: translateY(-2px); box-shadow: 0 4px 15px rgba(0,0,0,0.3); }}
+.qp-btn:disabled {{ opacity: 0.5; cursor: not-allowed; transform: none; }}
+.qp-btn-fb {{ background: #1877f2; color: #fff; }}
+.qp-btn-ig {{ background: #e1306c; color: #fff; }}
+.qp-btn-both {{ background: linear-gradient(135deg, #1877f2, #e1306c); color: #fff; }}
+.qp-btn-queue {{ background: #4caf50; color: #fff; }}
+.qp-btn-custom {{ background: #ffd700; color: #000; }}
+.qp-btn-refill {{ background: #9b59b6; color: #fff; }}
+.qp-select {{ width: 100%; background: #0a0a0f; border: 1px solid #2a2a4a; border-radius: 8px; color: #e0e0e0; padding: 10px 12px; font-size: 14px; margin-bottom: 10px; }}
+.qp-status {{ margin-top: 12px; padding: 10px; border-radius: 8px; font-size: 13px; display: none; }}
+.qp-status.success {{ display: block; background: rgba(76,175,80,0.15); color: #4caf50; border: 1px solid rgba(76,175,80,0.3); }}
+.qp-status.error {{ display: block; background: rgba(244,67,54,0.15); color: #f44336; border: 1px solid rgba(244,67,54,0.3); }}
+.qp-status.loading {{ display: block; background: rgba(255,152,0,0.15); color: #ff9800; border: 1px solid rgba(255,152,0,0.3); }}
+.qp-queue-pick {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin: 12px 0; max-height: 400px; overflow-y: auto; }}
+.qp-queue-item {{ background: #16213e; border-radius: 8px; padding: 10px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s; }}
+.qp-queue-item:hover {{ border-color: #4caf50; }}
+.qp-queue-item.selected {{ border-color: #4caf50; background: rgba(76,175,80,0.1); }}
+.qp-queue-item img {{ width: 100%; height: 100px; object-fit: cover; border-radius: 6px; margin-bottom: 6px; }}
+.qp-queue-item .title {{ font-size: 12px; color: #fff; font-weight: 600; }}
+.qp-actions {{ display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }}
+
 /* Insights box */
 .insights-box {{ background: linear-gradient(135deg, #1a1a2e, #16213e); border: 1px solid #9b59b6; border-radius: 12px; padding: 20px; margin: 15px 0; }}
 .insights-box h3 {{ color: #9b59b6; margin-bottom: 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }}
@@ -579,6 +620,7 @@ tr:hover {{ background: #16213e; }}
     <button class="nav-tab" onclick="showTab('social')">FB / IG / TT</button>
     <button class="nav-tab" onclick="showTab('intel')">Intelligence</button>
     <button class="nav-tab" onclick="showTab('audit')">Weekly Audit</button>
+    <button class="nav-tab" onclick="showTab('quickpost')" style="background:#4caf50;color:#fff;">⚡ Quick Post</button>
 </div>
 
 <!-- ═══════════════════════════════════════════════ -->
@@ -997,9 +1039,216 @@ tr:hover {{ background: #16213e; }}
 
 </div>
 
+<!-- ═══════════════════════════════════════════════ -->
+<!-- TAB: QUICK POST -->
+<!-- ═══════════════════════════════════════════════ -->
+<div id="tab-quickpost" class="tab-content">
+
+<div class="quickpost-grid">
+
+    <!-- LEFT: Post from Queue -->
+    <div class="quickpost-panel">
+        <h3>⚡ Post from Queue</h3>
+        <p style="color:#888;font-size:13px;margin-bottom:12px;">Select a queued post and fire it to Facebook, Instagram, or both.</p>
+        
+        <div class="qp-queue-pick" id="qpQueuePick">
+            {qp_queue_items}
+        </div>
+        
+        <div class="qp-actions">
+            <button class="qp-btn qp-btn-fb" onclick="triggerQueuePost('facebook')" id="qpBtnFb">Post to Facebook</button>
+            <button class="qp-btn qp-btn-ig" onclick="triggerQueuePost('instagram')" id="qpBtnIg">Post to Instagram</button>
+            <button class="qp-btn qp-btn-both" onclick="triggerQueuePost('both')" id="qpBtnBoth">Post to Both</button>
+        </div>
+        <div id="qpQueueStatus" class="qp-status"></div>
+    </div>
+
+    <!-- RIGHT: Custom Post -->
+    <div class="quickpost-panel custom">
+        <h3>✏️ Write a Custom Post</h3>
+        <p style="color:#888;font-size:13px;margin-bottom:12px;">Write your own caption and post it manually to any platform.</p>
+        
+        <input type="text" class="qp-input" id="qpImageUrl" placeholder="Image URL (paste a link to any image — optional)">
+        <textarea class="qp-textarea" id="qpCaption" placeholder="Write your caption here...
+
+Tip: End with a question to boost engagement!
+
+#ChicagoFleetWraps #VehicleWrap #FleetBranding"></textarea>
+        
+        <div style="margin-top:10px;">
+            <label style="color:#888;font-size:12px;">Post to:</label>
+            <select class="qp-select" id="qpPlatform">
+                <option value="both">Both (Facebook + Instagram)</option>
+                <option value="facebook">Facebook Only</option>
+                <option value="instagram">Instagram Only</option>
+            </select>
+        </div>
+        
+        <div class="qp-actions">
+            <button class="qp-btn qp-btn-custom" onclick="triggerCustomPost()">Publish Custom Post</button>
+        </div>
+        <div id="qpCustomStatus" class="qp-status"></div>
+    </div>
+
+</div>
+
+<div style="margin-top:20px;">
+    <div class="quickpost-panel" style="border-color:#9b59b6;">
+        <h3 style="color:#9b59b6;">🔧 Quick Actions</h3>
+        <div class="qp-actions">
+            <button class="qp-btn qp-btn-refill" onclick="triggerMode('refill')">🔄 Refill Queue</button>
+            <button class="qp-btn qp-btn-queue" onclick="triggerMode('learn')">🧠 Run Learning</button>
+            <button class="qp-btn" style="background:#e94560;color:#fff;" onclick="triggerMode('dashboard')">📊 Refresh Dashboard</button>
+            <button class="qp-btn" style="background:#ff9800;color:#fff;" onclick="triggerMode('social')">📱 Run Social Cycle</button>
+            <button class="qp-btn" style="background:#00f2ea;color:#000;" onclick="triggerMode('full')">🚀 Full Engine Run</button>
+        </div>
+        <div id="qpActionStatus" class="qp-status"></div>
+    </div>
+</div>
+
+</div>
+
 </div><!-- /container -->
 
 <script>
+// GitHub API config for Quick Post
+const GH_TOKEN = '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';
+const GH_REPO = 'RoyWraps69/cfw-reddit-bot';
+const GH_WORKFLOW = 'bot.yml';
+
+let selectedQueueIdx = -1;
+
+function selectQueueItem(idx) {{
+    document.querySelectorAll('.qp-queue-item').forEach(el => el.classList.remove('selected'));
+    document.getElementById('qp-item-' + idx).classList.add('selected');
+    selectedQueueIdx = idx;
+}}
+
+async function triggerWorkflow(mode, extraRef) {{
+    const url = `https://api.github.com/repos/${{GH_REPO}}/actions/workflows/${{GH_WORKFLOW}}/dispatches`;
+    const body = {{
+        ref: 'master',
+        inputs: {{ mode: mode }}
+    }};
+    const resp = await fetch(url, {{
+        method: 'POST',
+        headers: {{
+            'Authorization': `token ${{GH_TOKEN}}`,
+            'Accept': 'application/vnd.github.v3+json',
+            'Content-Type': 'application/json'
+        }},
+        body: JSON.stringify(body)
+    }});
+    return resp;
+}}
+
+async function triggerQueuePost(platform) {{
+    const statusEl = document.getElementById('qpQueueStatus');
+    if (selectedQueueIdx < 0) {{
+        statusEl.className = 'qp-status error';
+        statusEl.textContent = 'Please select a post from the queue first.';
+        return;
+    }}
+    statusEl.className = 'qp-status loading';
+    statusEl.textContent = `Triggering post #${{selectedQueueIdx + 1}} to ${{platform}}... Please wait.`;
+    try {{
+        const resp = await triggerWorkflow('post');
+        if (resp.status === 204) {{
+            statusEl.className = 'qp-status success';
+            statusEl.textContent = `Post triggered successfully! The next queued post will be published to ${{platform}}. Check GitHub Actions for status.`;
+        }} else {{
+            const data = await resp.json();
+            statusEl.className = 'qp-status error';
+            statusEl.textContent = `Error: ${{data.message || resp.statusText}}`;
+        }}
+    }} catch (e) {{
+        statusEl.className = 'qp-status error';
+        statusEl.textContent = `Network error: ${{e.message}}`;
+    }}
+}}
+
+async function triggerCustomPost() {{
+    const caption = document.getElementById('qpCaption').value.trim();
+    const imageUrl = document.getElementById('qpImageUrl').value.trim();
+    const platform = document.getElementById('qpPlatform').value;
+    const statusEl = document.getElementById('qpCustomStatus');
+    
+    if (!caption) {{
+        statusEl.className = 'qp-status error';
+        statusEl.textContent = 'Please write a caption first.';
+        return;
+    }}
+    
+    statusEl.className = 'qp-status loading';
+    statusEl.textContent = 'Triggering custom post...';
+    
+    try {{
+        // Save the custom post data to a gist, then trigger the workflow
+        const gistResp = await fetch('https://api.github.com/gists', {{
+            method: 'POST',
+            headers: {{
+                'Authorization': `token ${{GH_TOKEN}}`,
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json'
+            }},
+            body: JSON.stringify({{
+                description: 'CFW Quick Post Data',
+                public: false,
+                files: {{
+                    'quick_post.json': {{
+                        content: JSON.stringify({{
+                            caption: caption,
+                            image_url: imageUrl,
+                            platform: platform,
+                            timestamp: new Date().toISOString()
+                        }}, null, 2)
+                    }}
+                }}
+            }})
+        }});
+        
+        if (gistResp.ok) {{
+            // Now trigger the post workflow
+            const resp = await triggerWorkflow('post');
+            if (resp.status === 204) {{
+                statusEl.className = 'qp-status success';
+                statusEl.textContent = `Custom post triggered! Caption will be published to ${{platform}}. Check GitHub Actions for status.`;
+                document.getElementById('qpCaption').value = '';
+                document.getElementById('qpImageUrl').value = '';
+            }} else {{
+                const data = await resp.json();
+                statusEl.className = 'qp-status error';
+                statusEl.textContent = `Workflow error: ${{data.message || resp.statusText}}`;
+            }}
+        }} else {{
+            statusEl.className = 'qp-status error';
+            statusEl.textContent = 'Failed to save post data.';
+        }}
+    }} catch (e) {{
+        statusEl.className = 'qp-status error';
+        statusEl.textContent = `Network error: ${{e.message}}`;
+    }}
+}}
+
+async function triggerMode(mode) {{
+    const statusEl = document.getElementById('qpActionStatus');
+    statusEl.className = 'qp-status loading';
+    statusEl.textContent = `Triggering ${{mode}} mode...`;
+    try {{
+        const resp = await triggerWorkflow(mode);
+        if (resp.status === 204) {{
+            statusEl.className = 'qp-status success';
+            statusEl.textContent = `${{mode.toUpperCase()}} mode triggered successfully! Check GitHub Actions for progress.`;
+        }} else {{
+            const data = await resp.json();
+            statusEl.className = 'qp-status error';
+            statusEl.textContent = `Error: ${{data.message || resp.statusText}}`;
+        }}
+    }} catch (e) {{
+        statusEl.className = 'qp-status error';
+        statusEl.textContent = `Network error: ${{e.message}}`;
+    }}
+}}
 // Tab navigation
 function showTab(name) {{
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));

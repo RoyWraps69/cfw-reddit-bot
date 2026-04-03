@@ -28,6 +28,9 @@ Usage:
   python master.py analyze            # Trend analysis + cross-platform intel only
   python master.py damage             # Damage control check only
   python master.py dashboard          # Generate dashboard only
+  python master.py refill             # Batch-generate posts into the content queue
+  python master.py post               # Post next item from queue (fast, no generation)
+  python master.py learn              # Collect engagement + learn what works
 """
 import sys
 import os
@@ -49,6 +52,7 @@ import facebook_bot
 import instagram_bot
 from tiktok_bot import TikTokBot
 from cross_platform_intel import get_cross_intel
+import content_queue
 from damage_control import (
     run_damage_check, get_posts_needing_replacement,
     mark_replacement_done, get_topics_to_avoid,
@@ -534,9 +538,21 @@ def run_full_cycle():
         "audience": decision.get("audience", "none"),
     }
 
-    # Phase 3: Generate and post content
-    posting_results = run_content_posting(decision)
+    # Phase 3: Post from queue (or generate+post if queue empty)
+    log(f"Content queue: {content_queue.queue_size()} posts ready")
+    if content_queue.queue_size() > 0:
+        posting_results = {}
+        post_ids = content_queue.post_from_queue()
+        posting_results["facebook"] = {"success": bool(post_ids.get("facebook"))}
+        posting_results["instagram"] = {"success": bool(post_ids.get("instagram"))}
+    else:
+        posting_results = run_content_posting(decision)
     cycle_results["posting"] = posting_results
+
+    # Auto-refill queue if low
+    if content_queue.needs_refill():
+        log(f"Queue low ({content_queue.queue_size()}), auto-refilling...")
+        content_queue.refill_queue()
 
     # Phase 4: Engagement
     engagement_results = run_engagement()
@@ -579,9 +595,20 @@ def main():
         # Reddit only (uses the existing bot.py)
         reddit_bot.main()
     elif mode == "social":
-        trends = run_trend_analysis()
-        decision = run_content_decision(trends)
-        run_content_posting(decision)
+        # Use queue system: post from barrel, refill if needed
+        log(f"Queue status: {content_queue.queue_size()} posts ready")
+        content_queue.collect_engagement()  # track past posts
+        content_queue.analyze_and_learn()   # learn from data
+        if content_queue.queue_size() > 0:
+            content_queue.post_from_queue()
+        else:
+            log("Queue empty — generating on the fly + refilling")
+            trends = run_trend_analysis()
+            decision = run_content_decision(trends)
+            run_content_posting(decision)
+            content_queue.refill_queue(5)  # fill barrel for next time
+        if content_queue.needs_refill():
+            content_queue.refill_queue()
     elif mode == "content":
         trends = run_trend_analysis()
         decision = run_content_decision(trends)
@@ -595,9 +622,31 @@ def main():
         run_damage_control()
     elif mode == "dashboard":
         run_dashboard_generation()
+    elif mode == "refill":
+        # Batch-generate posts into the queue
+        n = int(sys.argv[2]) if len(sys.argv) > 2 else 8
+        log(f"Refilling content queue with {n} posts...")
+        content_queue.refill_queue(n)
+        log(f"Queue now has {content_queue.queue_size()} posts ready")
+    elif mode == "post":
+        # Fast post from queue — no generation
+        log(f"Posting from queue ({content_queue.queue_size()} ready)...")
+        post_ids = content_queue.post_from_queue()
+        log(f"Posted: {post_ids}")
+    elif mode == "learn":
+        # Collect engagement data and learn
+        log("Collecting engagement data...")
+        content_queue.collect_engagement()
+        log("Analyzing patterns...")
+        learning = content_queue.analyze_and_learn()
+        log(f"Learning complete: {learning.get('total_posts_analyzed', 0)} posts analyzed")
+        log(f"Avg score: {learning.get('avg_score', 'N/A')}")
+        log(f"Trend: {learning.get('trend_direction', 'N/A')}")
+        if learning.get('insights_summary'):
+            log(f"Insights: {learning['insights_summary']}")
     else:
         print(f"Unknown mode: {mode}", flush=True)
-        print("Available: full, reddit, social, content, engage, analyze, damage, dashboard", flush=True)
+        print("Available: full, reddit, social, content, engage, analyze, damage, dashboard, refill, post, learn", flush=True)
 
 
 if __name__ == "__main__":

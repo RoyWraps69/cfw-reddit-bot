@@ -22,6 +22,9 @@ on:
           - analyze
           - damage
           - dashboard
+          - refill
+          - post
+          - learn
           - warming
           - scan-only
           - create-thread
@@ -76,8 +79,16 @@ jobs:
           restore-keys: |
             engine-state-
 
+      - name: Restore content queue
+        uses: actions/cache/restore@v4
+        with:
+          path: data/content_queue/
+          key: content-queue-${{ github.run_number }}
+          restore-keys: |
+            content-queue-
+
       - name: Create data directories
-        run: mkdir -p data logs data/generated_media
+        run: mkdir -p data logs data/generated_media data/content_queue
 
       - name: Write FB Page Token
         if: env.FB_PAGE_TOKEN != ''
@@ -123,7 +134,7 @@ jobs:
           
           # Route to the right entry point
           case ${MODE} in
-            full|social|content|engage|analyze|damage|dashboard)
+            full|social|content|engage|analyze|damage|dashboard|refill|post|learn)
               echo "Running master orchestrator in ${MODE} mode..."
               python master.py ${MODE}
               ;;
@@ -145,6 +156,13 @@ jobs:
             data/
             logs/
           key: engine-state-${{ github.run_number }}
+
+      - name: Save content queue
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/content_queue/
+          key: content-queue-${{ github.run_number }}
 
       - name: Deploy dashboard to GitHub Pages
         if: always()

@@ -79,6 +79,12 @@ jobs:
       - name: Create data directories
         run: mkdir -p data logs data/generated_media
 
+      - name: Write FB Page Token
+        if: env.FB_PAGE_TOKEN != ''
+        env:
+          FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
+        run: echo "$FB_PAGE_TOKEN" > data/fb_page_token.txt
+
       - name: Write Reddit cookies
         run: echo '${{ secrets.REDDIT_COOKIES_JSON }}' > data/reddit_cookies.json
 
@@ -105,6 +111,7 @@ jobs:
           REDDIT_COOKIES_JSON: ${{ secrets.REDDIT_COOKIES_JSON }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
           PYTHONUNBUFFERED: '1'
         run: |
           MODE="${{ github.event.inputs.mode || 'full' }}"

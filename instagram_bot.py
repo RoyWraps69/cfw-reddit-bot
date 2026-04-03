@@ -1,527 +1,186 @@
 """
-Chicago Fleet Wraps — Instagram Bot v1.0
-FULL CONTENT MACHINE: Posts, stories, reels, comments, engagement.
-
-Every hour:
-1. Gets content decision from the brain
-2. Posts to the CFW Instagram feed (with AI-generated image)
-3. Engages with relevant posts (comments on hashtag feeds)
-4. Tracks engagement for self-improvement
-
-Uses Playwright browser automation via Instagram web.
+Instagram Bot v4.0 — Graph API Edition
+Posts to @chicago_fleet_wraps via Meta Graph API.
+No browser automation — rock solid API calls only.
 """
-import os
-import json
-import random
-import asyncio
-from datetime import datetime
-from config import DATA_DIR, OPENAI_MODEL, BUSINESS_CONTEXT
-from content_brain import get_brain
 
-IG_POST_LOG = os.path.join(DATA_DIR, "ig_post_history.json")
-IG_COMMENT_LOG = os.path.join(DATA_DIR, "ig_comment_history.json")
-IG_DAILY_LOG = os.path.join(DATA_DIR, "ig_daily_activity.json")
+import os, json, time, logging, requests, subprocess
 
-IG_MAX_POSTS_PER_DAY = 6
-IG_MAX_COMMENTS_PER_DAY = 20
-IG_MIN_DELAY_SECONDS = 90
-IG_MAX_DELAY_SECONDS = 240
+log = logging.getLogger("instagram_bot")
 
-# Hashtag sets for engagement (rotate to avoid patterns)
-ENGAGE_HASHTAGS = [
-    "carwrap", "vinylwrap", "colorchangewrap", "wrappedcars", "wraplife",
-    "vehiclewrap", "fleetwrap", "truckwrap", "vanwrap", "ppf",
-    "ceramiccoating", "autodetailing", "customcars", "carsofinstagram",
-    "rivian", "tesla", "cybertruck", "electricvehicle", "evlife",
-    "smallbusiness", "entrepreneur", "foodtruck", "fleetmanagement",
-    "chicagocars", "chicago", "chicagobusiness",
-    "matteblack", "satinwrap", "chromedelete", "paintprotection",
-]
+IG_ACCOUNT_ID = "17841470140774907"
+GRAPH_URL = "https://graph.facebook.com/v25.0"
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+TOKEN_FILE = os.path.join(DATA_DIR, "fb_page_token.txt")  # Same token works for IG
+HISTORY_FILE = os.path.join(DATA_DIR, "ig_post_history.json")
 
 
-class InstagramBot:
-    """Instagram content machine using Playwright browser automation."""
+def _get_token() -> str:
+    if os.path.exists(TOKEN_FILE):
+        return open(TOKEN_FILE).read().strip()
+    return os.environ.get("FB_PAGE_TOKEN", "")
 
-    def __init__(self):
-        self.browser = None
-        self.context = None
-        self.page = None
-        self.brain = get_brain()
-        self.posts_today = 0
-        self.comments_today = 0
-        self._load_daily_state()
 
-    def _load_daily_state(self):
-        if os.path.exists(IG_DAILY_LOG):
-            try:
-                with open(IG_DAILY_LOG, "r") as f:
-                    data = json.load(f)
-                if data.get("date") == datetime.now().strftime("%Y-%m-%d"):
-                    self.posts_today = data.get("posts", 0)
-                    self.comments_today = data.get("comments", 0)
-            except Exception:
-                pass
-
-    def _save_daily_state(self):
-        os.makedirs(DATA_DIR, exist_ok=True)
-        with open(IG_DAILY_LOG, "w") as f:
-            json.dump({
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "posts": self.posts_today,
-                "comments": self.comments_today,
-            }, f)
-
-    async def start(self):
-        """Launch browser with restored Instagram session cookies."""
-        from browser_launcher import launch_browser
-        self._pw, self.browser, self.context, self.page = await launch_browser("instagram")
-        print("  [IG] Browser started with restored session", flush=True)
-
-    async def stop(self):
-        if self.page:
-            try:
-                await self.page.close()
-            except Exception:
-                pass
-        if hasattr(self, '_pw') and self._pw:
-            from browser_launcher import close_browser
-            await close_browser(self._pw, self.browser)
-
-    # ─────────────────────────────────────────
-    # MAIN CYCLE
-    # ─────────────────────────────────────────
-
-    async def run_cycle(self, trends: dict = None, generated_image_path: str = None):
-        """Run one full Instagram cycle."""
-        print(f"\n{'='*50}", flush=True)
-        print(f"  [IG] Starting cycle — Posts: {self.posts_today}/{IG_MAX_POSTS_PER_DAY}, "
-              f"Comments: {self.comments_today}/{IG_MAX_COMMENTS_PER_DAY}", flush=True)
-
-        results = {"posts": 0, "comments": 0, "status": "complete"}
-
+def _load_history() -> list:
+    if os.path.exists(HISTORY_FILE):
         try:
-            await self.page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(4)
-
-            # Check login
-            page_text = await self.page.inner_text("body")
-            if "Log in" in page_text and "Sign up" in page_text:
-                print("  [IG] Not logged in. Skipping.", flush=True)
-                results["status"] = "not_logged_in"
-                return results
-
-            # PHASE 1: Post content (always post — generate branded image if none provided)
-            if self.posts_today < IG_MAX_POSTS_PER_DAY:
-                # If no image provided, generate a branded template
-                if not generated_image_path:
-                    from media_generator import generate_branded_image, _generate_image_content
-                    decision = self.brain.decide_next_post("instagram", trends)
-                    headline, subtext = _generate_image_content(decision)
-                    generated_image_path = generate_branded_image(headline, subtext, decision.get("topic", ""))
-                    print(f"  [IG] Generated branded image: {generated_image_path}", flush=True)
-                post_result = await self._post_content(trends, generated_image_path)
-                if post_result:
-                    results["posts"] = 1
-                    self.posts_today += 1
-                    self._save_daily_state()
-
-            # PHASE 2: Engage with hashtag feeds
-            if self.comments_today < IG_MAX_COMMENTS_PER_DAY:
-                comments = await self._engage_with_hashtags()
-                results["comments"] = comments
-                self.comments_today += comments
-                self._save_daily_state()
-
-        except Exception as e:
-            print(f"  [IG] Cycle error: {e}", flush=True)
-            results["status"] = f"error: {str(e)[:100]}"
-
-        print(f"  [IG] Cycle done. Posted {results['posts']}, commented {results['comments']}", flush=True)
-        return results
-
-    # ─────────────────────────────────────────
-    # POSTING
-    # ─────────────────────────────────────────
-
-    async def _post_content(self, trends: dict, image_path: str,
-                            override_caption: str = "", override_hashtags: list = None) -> bool:
-        """Post content to Instagram feed."""
-        try:
-            if override_caption:
-                caption = override_caption
-                hashtags = override_hashtags or []
-            else:
-                decision = self.brain.decide_next_post("instagram", trends)
-                caption = decision.get("caption", "")
-                hashtags = decision.get("hashtags", [])
-
-            # Instagram hashtag strategy: put in caption
-            if hashtags:
-                caption += "\n.\n.\n.\n" + " ".join(f"#{tag}" for tag in hashtags[:30])
-
-            print(f"  [IG] Posting: {caption[:80]}...", flush=True)
-
-            # Navigate to Instagram and find the create post button
-            await self.page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=30000)
-            await asyncio.sleep(3)
-
-            # Find the "+" or "Create" button
-            create_btn = await self.page.query_selector(
-                '[aria-label="New post"], [aria-label="Create"], '
-                'svg[aria-label="New post"], a[href="/create/"]'
-            )
-
-            if not create_btn:
-                # Try finding by text content
-                buttons = await self.page.query_selector_all('[role="button"], a, button')
-                for btn in buttons:
-                    label = await btn.get_attribute("aria-label") or ""
-                    if "new" in label.lower() or "create" in label.lower():
-                        create_btn = btn
-                        break
-
-            if create_btn:
-                await create_btn.click()
-                await asyncio.sleep(3)
-
-                # Upload the image
-                file_input = await self.page.query_selector('input[type="file"]')
-                if file_input and image_path and os.path.exists(image_path):
-                    await file_input.set_input_files(image_path)
-                    await asyncio.sleep(5)
-
-                    # Click Next (crop screen)
-                    next_btn = await self.page.query_selector(
-                        'button:has-text("Next"), [aria-label="Next"]'
-                    )
-                    if next_btn:
-                        await next_btn.click()
-                        await asyncio.sleep(3)
-
-                    # Click Next again (filter screen)
-                    next_btn = await self.page.query_selector(
-                        'button:has-text("Next"), [aria-label="Next"]'
-                    )
-                    if next_btn:
-                        await next_btn.click()
-                        await asyncio.sleep(3)
-
-                    # Find caption textarea and type
-                    caption_area = await self.page.query_selector(
-                        'textarea[aria-label*="caption"], textarea[placeholder*="caption"], '
-                        '[contenteditable="true"], textarea'
-                    )
-                    if caption_area:
-                        await caption_area.click()
-                        await caption_area.fill(caption)
-                        await asyncio.sleep(2)
-
-                    # Click Share
-                    share_btn = await self.page.query_selector(
-                        'button:has-text("Share"), [aria-label="Share"]'
-                    )
-                    if share_btn:
-                        await share_btn.click()
-                        await asyncio.sleep(8)
-                        print(f"  [IG] Posted successfully", flush=True)
-
-                        self.brain.record_post({
-                            "id": f"ig_{int(datetime.now().timestamp())}",
-                            "platform": "instagram",
-                            "content_type": decision.get("content_type", "image"),
-                            "topic": decision.get("topic", ""),
-                            "audience": decision.get("audience", ""),
-                            "caption": caption[:200],
-                            "wrappable_target": decision.get("wrappable_target", ""),
-                            "campaign": decision.get("campaign", ""),
-                        })
-
-                        self._log_post(decision, caption)
-                        return True
-
-            print(f"  [IG] Could not find create post UI", flush=True)
-            return False
-
-        except Exception as e:
-            print(f"  [IG] Post error: {e}", flush=True)
-            return False
-
-    # ─────────────────────────────────────────
-    # ENGAGEMENT: Comment on hashtag feeds
-    # ─────────────────────────────────────────
-
-    async def _engage_with_hashtags(self) -> int:
-        """Browse hashtag feeds and comment on relevant posts."""
-        comments_posted = 0
-        max_comments = min(4, IG_MAX_COMMENTS_PER_DAY - self.comments_today)
-
-        # Pick random hashtags to browse
-        hashtags = random.sample(ENGAGE_HASHTAGS, min(3, len(ENGAGE_HASHTAGS)))
-
-        for tag in hashtags:
-            if comments_posted >= max_comments:
-                break
-
-            try:
-                await self.page.goto(f"https://www.instagram.com/explore/tags/{tag}/",
-                                    wait_until="domcontentloaded", timeout=20000)
-                await asyncio.sleep(4)
-
-                # Click on a recent post (not top posts)
-                posts = await self.page.query_selector_all('article a[href*="/p/"]')
-                recent_posts = posts[9:18] if len(posts) > 9 else posts  # Skip top 9 (top posts)
-
-                for post_link in random.sample(list(recent_posts), min(2, len(recent_posts))):
-                    if comments_posted >= max_comments:
-                        break
-
-                    try:
-                        await post_link.click()
-                        await asyncio.sleep(4)
-
-                        # Read the post caption
-                        caption_elem = await self.page.query_selector(
-                            'div[class*="Caption"] span, article span[dir="auto"]'
-                        )
-                        caption_text = ""
-                        if caption_elem:
-                            caption_text = await caption_elem.inner_text()
-
-                        if not caption_text or len(caption_text) < 10:
-                            # Close and continue
-                            await self.page.keyboard.press("Escape")
-                            await asyncio.sleep(1)
-                            continue
-
-                        # Get comment strategy
-                        strategy = self.brain.decide_comment_strategy(
-                            {"text": caption_text[:300]}, "instagram"
-                        )
-
-                        # Generate comment
-                        comment_text = self._generate_ig_comment(caption_text[:300], strategy, tag)
-                        if not comment_text:
-                            await self.page.keyboard.press("Escape")
-                            await asyncio.sleep(1)
-                            continue
-
-                        # Find comment input and post
-                        comment_input = await self.page.query_selector(
-                            'textarea[aria-label*="comment"], textarea[placeholder*="comment"], '
-                            'form textarea'
-                        )
-
-                        if comment_input:
-                            await comment_input.click()
-                            await asyncio.sleep(1)
-                            await comment_input.fill(comment_text)
-                            await asyncio.sleep(1)
-
-                            # Find and click post button
-                            post_btn = await self.page.query_selector(
-                                'button:has-text("Post"), [type="submit"]'
-                            )
-                            if post_btn:
-                                await post_btn.click()
-                                await asyncio.sleep(3)
-                                comments_posted += 1
-                                print(f"  [IG] Commented on #{tag}: {comment_text[:50]}...", flush=True)
-                                self._log_comment(tag, caption_text[:100], comment_text, strategy.get("mention_cfw", False))
-
-                        # Close post modal
-                        await self.page.keyboard.press("Escape")
-                        await asyncio.sleep(1)
-
-                        # Delay
-                        delay = random.randint(IG_MIN_DELAY_SECONDS, IG_MAX_DELAY_SECONDS)
-                        await asyncio.sleep(delay)
-
-                    except Exception as e:
-                        print(f"  [IG] Comment error: {e}", flush=True)
-                        try:
-                            await self.page.keyboard.press("Escape")
-                        except Exception:
-                            pass
-                        continue
-
-            except Exception as e:
-                print(f"  [IG] Hashtag browse error: {e}", flush=True)
-                continue
-
-        return comments_posted
-
-    def _generate_ig_comment(self, caption: str, strategy: dict, hashtag: str) -> str:
-        """Generate an Instagram comment."""
-        from openai import OpenAI
-        base_url = os.environ.get("OPENAI_BASE_URL", None)
-        ai_client = OpenAI(base_url=base_url) if base_url else OpenAI()
-
-        mention_cfw = strategy.get("mention_cfw", False)
-
-        if mention_cfw:
-            system = f"""You're commenting as @chicagofleetwraps on Instagram.
-Be genuine and helpful. If they're looking for a wrap shop in Chicago, mention you're based in Portage Park.
-Keep under 30 words. Sound like a real business, not a bot.
-No emojis. No "DM us!" No "check out our page!"."""
-        else:
-            system = """You're commenting on an Instagram post about cars/wraps/vehicles.
-Be genuine and specific. Comment on something specific in the photo or caption.
-Keep under 25 words. Sound like a real person.
-No emojis. No generic "nice!" or "fire!" comments.
-Add value — a specific compliment, a question, or a relevant observation."""
-
-        prompt = f"""Post caption: {caption[:200]}
-Hashtag context: #{hashtag}
-
-Write a comment. ONLY the comment text."""
-
-        try:
-            response = ai_client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.9,
-                max_tokens=60,
-            )
-            return response.choices[0].message.content.strip().strip('"').strip("'")
-        except Exception as e:
-            print(f"  [IG] AI error: {e}", flush=True)
-            return ""
-
-    # ─────────────────────────────────────────
-    # LOGGING
-    # ─────────────────────────────────────────
-
-    def _log_post(self, decision: dict, caption: str):
-        os.makedirs(DATA_DIR, exist_ok=True)
-        log = []
-        if os.path.exists(IG_POST_LOG):
-            try:
-                with open(IG_POST_LOG, "r") as f:
-                    log = json.load(f)
-            except Exception:
-                log = []
-
-        log.append({
-            "date": datetime.now().isoformat(),
-            "platform": "instagram",
-            "topic": decision.get("topic", ""),
-            "caption": caption[:300],
-            "audience": decision.get("audience", ""),
-            "campaign": decision.get("campaign", ""),
-        })
-        log = log[-500:]
-        with open(IG_POST_LOG, "w") as f:
-            json.dump(log, f, indent=2)
-
-    def _log_comment(self, hashtag: str, post_caption: str, comment: str, is_promo: bool):
-        os.makedirs(DATA_DIR, exist_ok=True)
-        log = []
-        if os.path.exists(IG_COMMENT_LOG):
-            try:
-                with open(IG_COMMENT_LOG, "r") as f:
-                    log = json.load(f)
-            except Exception:
-                log = []
-
-        log.append({
-            "date": datetime.now().isoformat(),
-            "platform": "instagram",
-            "hashtag": hashtag,
-            "post_caption": post_caption[:100],
-            "comment": comment,
-            "is_promo": is_promo,
-        })
-        log = log[-500:]
-        with open(IG_COMMENT_LOG, "w") as f:
-            json.dump(log, f, indent=2)
-
-    def get_dashboard_data(self) -> dict:
-        posts, comments = [], []
-        if os.path.exists(IG_POST_LOG):
-            try:
-                with open(IG_POST_LOG, "r") as f:
-                    posts = json.load(f)
-            except Exception:
-                pass
-        if os.path.exists(IG_COMMENT_LOG):
-            try:
-                with open(IG_COMMENT_LOG, "r") as f:
-                    comments = json.load(f)
-            except Exception:
-                pass
-
-        return {
-            "platform": "instagram",
-            "total_posts": len(posts),
-            "total_comments": len(comments),
-            "today_posts": self.posts_today,
-            "today_comments": self.comments_today,
-            "recent_posts": posts[-5:],
-            "recent_comments": comments[-5:],
-        }
+            return json.load(open(HISTORY_FILE))
+        except Exception:
+            return []
+    return []
 
 
-    def create_post(self, caption: str = "", hashtags: list = None,
-                    image_path: str = None) -> dict:
-        """Synchronous wrapper to create a post — called by master.py."""
-        async def _do_post():
-            await self.start()
-            try:
-                # Generate branded image if none provided
-                if not image_path:
-                    from media_generator import generate_branded_image, _generate_image_content
-                    decision = {"topic": "vehicle wraps", "caption": caption}
-                    headline, subtext = _generate_image_content(decision)
-                    gen_image = generate_branded_image(headline, subtext)
-                    print(f"  [IG] Generated branded image: {gen_image}", flush=True)
-                else:
-                    gen_image = image_path
-                result = await self._post_content(
-                    trends={"content_ideas": []},
-                    image_path=gen_image,
-                    override_caption=caption,
-                    override_hashtags=hashtags or [],
-                )
-                return {"posted": result, "caption": caption}
-            finally:
-                await self.stop()
-
-        try:
-            return asyncio.run(_do_post())
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            try:
-                return loop.run_until_complete(_do_post())
-            finally:
-                loop.close()
-
-    def engage_with_posts(self, max_comments: int = 3) -> dict:
-        """Synchronous wrapper to engage with posts — called by master.py."""
-        async def _do_engage():
-            await self.start()
-            try:
-                count = await self._engage_with_hashtags()
-                return {"status": "completed", "comments_posted": count}
-            finally:
-                await self.stop()
-
-        try:
-            return asyncio.run(_do_engage())
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            try:
-                return loop.run_until_complete(_do_engage())
-            finally:
-                loop.close()
+def _save_history(history: list):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(HISTORY_FILE, "w") as f:
+        json.dump(history[-200:], f, indent=2)
 
 
-async def run_instagram_cycle(trends: dict = None, image_path: str = None):
-    bot = InstagramBot()
+def _upload_image_public(image_path: str) -> str:
+    """Upload image to get a public URL (required by Instagram API)."""
     try:
-        await bot.start()
-        return await bot.run_cycle(trends, image_path)
-    finally:
-        await bot.stop()
+        result = subprocess.run(
+            ["manus-upload-file", image_path],
+            capture_output=True, text=True, timeout=120
+        )
+        for line in result.stdout.strip().split("\n"):
+            if "CDN URL:" in line:
+                return line.split("CDN URL:")[-1].strip()
+            if line.strip().startswith("http"):
+                return line.strip()
+    except Exception as e:
+        log.error(f"Upload failed: {e}")
+    return ""
+
+
+def post_with_image(caption: str, image_path: str) -> dict:
+    """Post a photo with caption to Instagram."""
+    token = _get_token()
+    if not token:
+        return {"success": False, "error": "No token"}
+
+    public_url = _upload_image_public(image_path)
+    if not public_url:
+        print(f"  [INSTAGRAM] Failed to upload image to public URL", flush=True)
+        return {"success": False, "error": "Image upload failed"}
+
+    # Step 1: Create media container
+    r = requests.post(f"{GRAPH_URL}/{IG_ACCOUNT_ID}/media", data={
+        "image_url": public_url,
+        "caption": caption,
+        "access_token": token
+    })
+    data = r.json()
+    print(f"  [INSTAGRAM] Container: {r.status_code}", flush=True)
+
+    if r.status_code != 200 or "id" not in data:
+        print(f"  [INSTAGRAM] Container failed: {data}", flush=True)
+        return {"success": False, "error": str(data)}
+
+    container_id = data["id"]
+
+    # Step 2: Wait for processing
+    print(f"  [INSTAGRAM] Waiting for media processing...", flush=True)
+    for attempt in range(12):
+        time.sleep(5)
+        status_r = requests.get(f"{GRAPH_URL}/{container_id}",
+            params={"fields": "status_code", "access_token": token})
+        if status_r.status_code == 200:
+            status = status_r.json().get("status_code", "")
+            if status == "FINISHED":
+                break
+            elif status == "ERROR":
+                print(f"  [INSTAGRAM] Media processing error", flush=True)
+                return {"success": False, "error": "Media processing failed"}
+
+    # Step 3: Publish
+    r2 = requests.post(f"{GRAPH_URL}/{IG_ACCOUNT_ID}/media_publish", data={
+        "creation_id": container_id,
+        "access_token": token
+    })
+    data2 = r2.json()
+    print(f"  [INSTAGRAM] Publish: {r2.status_code}", flush=True)
+
+    if r2.status_code == 200 and "id" in data2:
+        media_id = data2["id"]
+        permalink = ""
+        try:
+            pr = requests.get(f"{GRAPH_URL}/{media_id}",
+                params={"fields": "permalink", "access_token": token})
+            if pr.status_code == 200:
+                permalink = pr.json().get("permalink", "")
+        except Exception:
+            pass
+
+        record = {
+            "media_id": media_id,
+            "caption": caption[:200],
+            "type": "photo",
+            "timestamp": time.time(),
+            "url": permalink or "https://instagram.com/chicago_fleet_wraps"
+        }
+        history = _load_history()
+        history.append(record)
+        _save_history(history)
+        print(f"  [INSTAGRAM] Posted: {record['url']}", flush=True)
+        return {"success": True, "media_id": media_id, "url": record["url"]}
+
+    print(f"  [INSTAGRAM] Publish failed: {data2}", flush=True)
+    return {"success": False, "error": str(data2)}
+
+
+def get_engagement(media_id: str) -> dict:
+    """Get engagement stats for a post."""
+    token = _get_token()
+    if not token:
+        return {}
+    r = requests.get(f"{GRAPH_URL}/{media_id}",
+        params={"fields": "like_count,comments_count", "access_token": token})
+    if r.status_code == 200:
+        d = r.json()
+        return {
+            "likes": d.get("like_count", 0),
+            "comments": d.get("comments_count", 0)
+        }
+    return {}
+
+
+# ─── Public interface for master.py ──────────────────────────────
+
+def create_post(caption: str = "", image_path: str = "", **kwargs) -> dict:
+    """Main entry: create an Instagram post (always requires an image)."""
+    from media_generator import generate_branded_image
+
+    if not caption:
+        caption = kwargs.get("text", "Chicago Fleet Wraps — premium vehicle wraps. #VehicleWraps #ChicagoFleetWraps")
+
+    if not image_path or not os.path.exists(image_path):
+        try:
+            headline = caption[:60]
+            subtext = caption[60:160] if len(caption) > 60 else ""
+            image_path = generate_branded_image(headline, subtext)
+        except Exception as e:
+            log.warning(f"Image gen failed: {e}")
+            return {"success": False, "error": "Instagram requires an image"}
+
+    return post_with_image(caption, image_path)
+
+
+def engage_with_posts(**kwargs) -> dict:
+    """Check engagement on recent posts."""
+    stats = {"checked": 0, "total_likes": 0, "total_comments": 0}
+    for post in _load_history()[-10:]:
+        eng = get_engagement(post.get("media_id", ""))
+        if eng:
+            stats["checked"] += 1
+            stats["total_likes"] += eng.get("likes", 0)
+            stats["total_comments"] += eng.get("comments", 0)
+    return stats
+
+
+def start(**kwargs):
+    print("  [INSTAGRAM] Graph API bot ready", flush=True)
+
+
+def stop(**kwargs):
+    pass

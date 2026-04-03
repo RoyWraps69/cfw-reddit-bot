@@ -45,8 +45,8 @@ import bot as reddit_bot
 from trend_analyzer import TrendAnalyzer
 from content_brain import ContentBrain
 from media_generator import create_content_package
-from facebook_bot import FacebookBot
-from instagram_bot import InstagramBot
+import facebook_bot
+import instagram_bot
 from tiktok_bot import TikTokBot
 from cross_platform_intel import get_cross_intel
 from damage_control import (
@@ -204,15 +204,17 @@ def run_content_posting(decision: dict) -> dict:
         if override["action"] != "suppress":
             fb_content = platform_content.get("facebook", {})
             if fb_content:
-                log("Posting to Facebook...")
-                fb = FacebookBot()
-                fb_result = fb.create_post(
-                    caption=fb_content.get("caption", ""),
-                    hashtags=fb_content.get("hashtags", []),
+                log("Posting to Facebook via Graph API...")
+                fb_caption = fb_content.get("caption", "")
+                fb_hashtags = fb_content.get("hashtags", [])
+                if fb_hashtags:
+                    fb_caption += "\n\n" + " ".join(f"#{h}" for h in fb_hashtags)
+                fb_result = facebook_bot.create_post(
+                    caption=fb_caption,
                     image_path=image_path,
                 )
                 results["facebook"] = fb_result
-                log(f"  Facebook: {'SUCCESS' if fb_result else 'FAILED'}")
+                log(f"  Facebook: {'SUCCESS' if fb_result.get('success') else 'FAILED'} — {fb_result}")
         else:
             log(f"  Facebook SUPPRESSED: {override.get('reason', '')}")
     except Exception as e:
@@ -226,15 +228,17 @@ def run_content_posting(decision: dict) -> dict:
         if override["action"] != "suppress":
             ig_content = platform_content.get("instagram", {})
             if ig_content:
-                log("Posting to Instagram...")
-                ig = InstagramBot()
-                ig_result = ig.create_post(
-                    caption=ig_content.get("caption", ""),
-                    hashtags=ig_content.get("hashtags", []),
+                log("Posting to Instagram via Graph API...")
+                ig_caption = ig_content.get("caption", "")
+                ig_hashtags = ig_content.get("hashtags", [])
+                if ig_hashtags:
+                    ig_caption += "\n.\n.\n.\n" + " ".join(f"#{h}" for h in ig_hashtags)
+                ig_result = instagram_bot.create_post(
+                    caption=ig_caption,
                     image_path=image_path,
                 )
                 results["instagram"] = ig_result
-                log(f"  Instagram: {'SUCCESS' if ig_result else 'FAILED'}")
+                log(f"  Instagram: {'SUCCESS' if ig_result.get('success') else 'FAILED'} — {ig_result}")
         else:
             log(f"  Instagram SUPPRESSED: {override.get('reason', '')}")
     except Exception as e:
@@ -308,9 +312,8 @@ def run_engagement() -> dict:
 
     # Facebook engagement
     try:
-        log("Running Facebook engagement...")
-        fb = FacebookBot()
-        fb_result = fb.engage_with_posts(max_comments=3)
+        log("Running Facebook engagement check...")
+        fb_result = facebook_bot.engage_with_posts()
         results["facebook"] = fb_result
         log(f"  Facebook engagement: {fb_result}")
     except Exception as e:
@@ -321,9 +324,8 @@ def run_engagement() -> dict:
 
     # Instagram engagement
     try:
-        log("Running Instagram engagement...")
-        ig = InstagramBot()
-        ig_result = ig.engage_with_posts(max_comments=3)
+        log("Running Instagram engagement check...")
+        ig_result = instagram_bot.engage_with_posts()
         results["instagram"] = ig_result
         log(f"  Instagram engagement: {ig_result}")
     except Exception as e:
@@ -393,17 +395,13 @@ def run_damage_control() -> dict:
                             # Post to the same platform
                             platform = entry.get("platform", "")
                             if platform == "facebook":
-                                fb = FacebookBot()
-                                fb.create_post(
+                                facebook_bot.create_post(
                                     caption=replacement.get("caption", ""),
-                                    hashtags=replacement.get("hashtags", []),
                                     image_path=package.get("image_path", ""),
                                 )
                             elif platform == "instagram":
-                                ig = InstagramBot()
-                                ig.create_post(
+                                instagram_bot.create_post(
                                     caption=replacement.get("caption", ""),
-                                    hashtags=replacement.get("hashtags", []),
                                     image_path=package.get("image_path", ""),
                                 )
                             elif platform == "tiktok":

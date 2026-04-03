@@ -147,23 +147,101 @@ def get_engagement(media_id: str) -> dict:
 
 # ─── Public interface for master.py ──────────────────────────────
 
-def create_post(caption: str = "", image_path: str = "", **kwargs) -> dict:
-    """Main entry: create an Instagram post (always requires an image)."""
-    from media_generator import generate_branded_image
+def create_post(caption: str = "", image_path: str = "", image_url: str = "", **kwargs) -> dict:
+    """Main entry: create an Instagram post.
+
+    RULE: Every post MUST have an AI-generated image of a wrapped vehicle.
+    Supports image_url (CDN) or image_path (local file).
+    If neither is provided, generates one via AI.
+    Never uses Pillow templates.
+    """
+    from media_generator import generate_image
 
     if not caption:
         caption = kwargs.get("text", "Chicago Fleet Wraps — premium vehicle wraps. #VehicleWraps #ChicagoFleetWraps")
 
+    # If image_url is provided (CDN), use it directly
+    if image_url:
+        return post_with_image_url(caption, image_url)
+
+    # If no local image, generate an AI image of a wrapped vehicle
     if not image_path or not os.path.exists(image_path):
+        print("  [INSTAGRAM] No image provided, generating AI vehicle image...", flush=True)
         try:
-            headline = caption[:60]
-            subtext = caption[60:160] if len(caption) > 60 else ""
-            image_path = generate_branded_image(headline, subtext)
+            decision = {"topic": caption[:80], "caption": caption}
+            image_path = generate_image(decision=decision)
         except Exception as e:
             log.warning(f"Image gen failed: {e}")
-            return {"success": False, "error": "Instagram requires an image"}
+            image_path = ""
+
+    # HARD RULE: never post without an image
+    if not image_path or not os.path.exists(image_path):
+        print("  [INSTAGRAM] ABORT: No image available. Will NOT post.", flush=True)
+        return {"success": False, "error": "No image available — refusing to post without image"}
 
     return post_with_image(caption, image_path)
+
+
+def post_with_image_url(caption: str, image_url: str) -> dict:
+    """Post to Instagram using a pre-uploaded CDN image URL."""
+    token = _get_token()
+    if not token:
+        return {"success": False, "error": "No token"}
+
+    print(f"  [INSTAGRAM] Posting with CDN image: {image_url[:80]}...", flush=True)
+
+    try:
+        # Step 1: Create media container with the CDN URL
+        container = requests.post(
+            f"{GRAPH_URL}/{IG_ACCOUNT_ID}/media",
+            data={
+                "image_url": image_url,
+                "caption": caption,
+                "access_token": token,
+            },
+            timeout=30,
+        ).json()
+
+        container_id = container.get("id")
+        if not container_id:
+            return {"success": False, "error": f"Container failed: {container}"}
+
+        # Step 2: Wait for processing
+        for _ in range(30):
+            status = requests.get(
+                f"{GRAPH_URL}/{container_id}",
+                params={"fields": "status_code", "access_token": token},
+                timeout=10,
+            ).json()
+            if status.get("status_code") == "FINISHED":
+                break
+            if status.get("status_code") == "ERROR":
+                return {"success": False, "error": f"Processing error: {status}"}
+            time.sleep(2)
+
+        # Step 3: Publish
+        publish = requests.post(
+            f"{GRAPH_URL}/{IG_ACCOUNT_ID}/media_publish",
+            data={"creation_id": container_id, "access_token": token},
+            timeout=30,
+        ).json()
+
+        media_id = publish.get("id")
+        if media_id:
+            history = _load_history()
+            history.append({
+                "media_id": media_id,
+                "caption": caption[:200],
+                "image_url": image_url,
+                "posted_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            })
+            _save_history(history)
+            print(f"  [INSTAGRAM] Posted via CDN URL: {media_id}", flush=True)
+            return {"success": True, "media_id": media_id}
+
+        return {"success": False, "error": f"Publish failed: {publish}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 def engage_with_posts(**kwargs) -> dict:

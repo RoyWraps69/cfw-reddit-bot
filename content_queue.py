@@ -561,7 +561,8 @@ def get_learning_context() -> str:
 
 def post_to_facebook(post: dict = None) -> dict:
     """Post one item from the queue to Facebook.
-    Supports image_url (CDN) or image_path (local file)."""
+    Supports image_url (CDN) or image_path (local file).
+    RULE: Never posts without an image."""
     import facebook_bot
 
     if not post:
@@ -570,20 +571,27 @@ def post_to_facebook(post: dict = None) -> dict:
         log.warning("No Facebook posts in queue")
         return {}
 
-    captions = post.get("captions", {})
-    fb_caption = captions.get("facebook", captions.get("default", ""))
-    image_url = post.get("image_url", "")
-    image_path = post.get("image_path", "")
+    # Use schema-aware caption extraction
+    fb_caption = _extract_caption(post, "facebook")
+    # Use media-aware image resolution (CDN > local > AI regen)
+    image_url, image_path = _ensure_media(post)
+
+    # HARD RULE: never post without an image
+    if not image_url and not image_path:
+        print("  [FACEBOOK] ABORT: No image available. Will NOT post text-only.", flush=True)
+        # Re-queue for retry
+        post["_retry_count"] = post.get("_retry_count", 0) + 1
+        if post["_retry_count"] <= 3:
+            push_to_queue(post)
+        return {"success": False, "error": "No image available"}
 
     try:
         if image_url:
-            # Post with pre-uploaded CDN image URL
             result = facebook_bot.create_post(caption=fb_caption, image_url=image_url)
-        elif image_path and os.path.exists(image_path):
-            result = facebook_bot.create_post(caption=fb_caption, image_path=image_path)
         else:
-            result = facebook_bot.create_post(caption=fb_caption)
+            result = facebook_bot.create_post(caption=fb_caption, image_path=image_path)
 
+        print(f"  [FACEBOOK] Result: {result}", flush=True)
         if result.get("success"):
             post_ids = {"facebook": result.get("post_id", "")}
             record_posted(post, post_ids, platform="facebook")
@@ -599,7 +607,8 @@ def post_to_facebook(post: dict = None) -> dict:
 
 def post_to_instagram(post: dict = None) -> dict:
     """Post one item from the queue to Instagram.
-    Supports image_url (CDN) or image_path (local file)."""
+    Supports image_url (CDN) or image_path (local file).
+    RULE: Never posts without an image."""
     import instagram_bot
 
     if not post:
@@ -608,20 +617,26 @@ def post_to_instagram(post: dict = None) -> dict:
         log.warning("No Instagram posts in queue")
         return {}
 
-    captions = post.get("captions", {})
-    ig_caption = captions.get("instagram", captions.get("default", ""))
-    image_url = post.get("image_url", "")
-    image_path = post.get("image_path", "")
+    # Use schema-aware caption extraction
+    ig_caption = _extract_caption(post, "instagram")
+    # Use media-aware image resolution (CDN > local > AI regen)
+    image_url, image_path = _ensure_media(post)
+
+    # HARD RULE: never post without an image
+    if not image_url and not image_path:
+        print("  [INSTAGRAM] ABORT: No image available. Will NOT post.", flush=True)
+        post["_retry_count"] = post.get("_retry_count", 0) + 1
+        if post["_retry_count"] <= 3:
+            push_to_queue(post)
+        return {"success": False, "error": "No image available"}
 
     try:
         if image_url:
             result = instagram_bot.create_post(caption=ig_caption, image_url=image_url)
-        elif image_path and os.path.exists(image_path):
-            result = instagram_bot.create_post(caption=ig_caption, image_path=image_path)
         else:
-            log.error("Instagram requires an image — no image_url or image_path found")
-            return {"success": False, "error": "No image available"}
+            result = instagram_bot.create_post(caption=ig_caption, image_path=image_path)
 
+        print(f"  [INSTAGRAM] Result: {result}", flush=True)
         if result.get("success"):
             post_ids = {"instagram": result.get("post_id", result.get("media_id", ""))}
             record_posted(post, post_ids, platform="instagram")
@@ -850,6 +865,78 @@ Be specific to a vehicle wrap business targeting Chicago business owners."""
 # FULL CYCLE HELPERS
 # ═══════════════════════════════════════════════════════════════
 
+def _extract_caption(post: dict, platform: str) -> str:
+    """Extract a plain-string caption for the given platform.
+
+    Handles both schemas produced by the codebase:
+      Schema A ("captions" key with plain strings):
+        post["captions"]["facebook"] = "Hello world"
+      Schema B ("platforms" key with nested dicts):
+        post["platforms"]["facebook"] = {"caption": "Hello world", "hashtags": [...]}
+    """
+    # Try "captions" first (flat strings)
+    captions = post.get("captions", {})
+    if captions:
+        val = captions.get(platform, captions.get("default", ""))
+        if isinstance(val, str) and val:
+            return val
+        if isinstance(val, dict):
+            txt = val.get("caption", "")
+            tags = val.get("hashtags", [])
+            if tags:
+                txt += "\n\n" + " ".join(f"#{t.lstrip('#')}" for t in tags)
+            return txt
+
+    # Try "platforms" (nested dicts from create_content_package)
+    platforms = post.get("platforms", {})
+    if platforms:
+        val = platforms.get(platform, platforms.get("default", {}))
+        if isinstance(val, str) and val:
+            return val
+        if isinstance(val, dict):
+            txt = val.get("caption", "")
+            tags = val.get("hashtags", [])
+            if tags:
+                txt += "\n\n" + " ".join(f"#{t.lstrip('#')}" for t in tags)
+            return txt
+
+    # Last resort — use the decision caption
+    decision = post.get("decision", {})
+    return decision.get("caption", "Chicago Fleet Wraps — premium vehicle wraps in Chicago.")
+
+
+def _ensure_media(post: dict) -> tuple:
+    """Return (image_url, image_path) ensuring at least one is valid.
+
+    RULE: Every post MUST have an AI-generated image of a wrapped vehicle.
+    Checks CDN image_url first, then local image_path.
+    If both are missing, regenerates via AI pipeline.
+    Never returns a Pillow template — always a real vehicle photo.
+    """
+    image_url = post.get("image_url", "")
+    if image_url:
+        return image_url, ""
+
+    image_path = post.get("image_path", "")
+    if image_path and os.path.exists(image_path):
+        return "", image_path
+
+    # Image is missing (common after GitHub Actions cache cycle) — regenerate
+    print("  [POST] Image missing, regenerating AI image on the fly...", flush=True)
+    try:
+        from media_generator import generate_image
+        decision = post.get("decision", {})
+        if not decision:
+            decision = {"topic": post.get("topic", "vehicle wraps")}
+        new_path = generate_image(decision=decision)
+        if new_path and os.path.exists(new_path):
+            print(f"  [POST] Regenerated AI image: {new_path}", flush=True)
+            return "", new_path
+    except Exception as e:
+        print(f"  [POST] Image regen failed: {e}", flush=True)
+    return "", ""
+
+
 def full_cycle():
     """Run the complete cycle: collect engagement → learn → post → refill if needed."""
     log.info("=" * 50)
@@ -882,7 +969,14 @@ def full_cycle():
 
 # Legacy compatibility
 def post_from_queue() -> dict:
-    """Legacy: post to both platforms from queue. Use post_cycle() instead."""
+    """Legacy: post to both platforms from queue. Use post_cycle() instead.
+    RULE: Never posts without an image."""
+    import logging as _logging
+    _logging.basicConfig(level=_logging.INFO, format="%(message)s")
+
+    print("\n  [POST] ═══════════════════════════════════════", flush=True)
+    print(f"  [POST] Queue: {queue_size()} total | FB: {queue_size('facebook')} | IG: {queue_size('instagram')}", flush=True)
+
     results = {}
     fb = post_to_facebook()
     if fb.get("success"):
@@ -890,6 +984,13 @@ def post_from_queue() -> dict:
     ig = post_to_instagram()
     if ig.get("success"):
         results["instagram"] = ig.get("post_id", ig.get("media_id", ""))
+
+    if results:
+        print(f"  [POST] SUCCESS: Posted to {list(results.keys())}", flush=True)
+    else:
+        print("  [POST] WARNING: No platforms succeeded", flush=True)
+
+    print("  [POST] ═══════════════════════════════════════\n", flush=True)
     return results
 
 

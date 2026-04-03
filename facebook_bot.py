@@ -181,23 +181,36 @@ def check_negative_reactions() -> list:
 # ─── Public interface for master.py ──────────────────────────────
 
 def create_post(caption: str = "", image_path: str = "", **kwargs) -> dict:
-    """Main entry: create a Facebook post with optional image."""
-    from media_generator import generate_branded_image
+    """Main entry: create a Facebook post.
+
+    RULE: Every post MUST have an image of a wrapped vehicle.
+    If no image_path is provided, generate one via AI.
+    If image generation fails, refuse to post (never post text-only).
+    """
+    from media_generator import generate_image
 
     if not caption:
         caption = kwargs.get("text", "Chicago Fleet Wraps — premium vehicle wraps in Chicago.")
 
-    if not image_path:
+    # If no image provided, generate an AI image of a wrapped vehicle
+    if not image_path or not os.path.exists(image_path):
+        print("  [FACEBOOK] No image provided, generating AI vehicle image...", flush=True)
         try:
-            headline = caption[:60]
-            subtext = caption[60:160] if len(caption) > 60 else ""
-            image_path = generate_branded_image(headline, subtext)
+            decision = {
+                "topic": caption[:80],
+                "caption": caption,
+            }
+            image_path = generate_image(decision=decision)
         except Exception as e:
             log.warning(f"Image gen failed: {e}")
+            image_path = ""
 
-    if image_path and os.path.exists(image_path):
-        return post_with_image(caption, image_path)
-    return post_text(caption)
+    # HARD RULE: never post without an image
+    if not image_path or not os.path.exists(image_path):
+        print("  [FACEBOOK] ABORT: No image available. Will NOT post text-only.", flush=True)
+        return {"success": False, "error": "No image available — refusing text-only post"}
+
+    return post_with_image(caption, image_path)
 
 
 def engage_with_posts(**kwargs) -> dict:

@@ -146,6 +146,19 @@ class RedditSession:
             return True
         return self.login()
 
+    def _get_api_headers(self) -> dict:
+        """Get headers for Reddit API calls (used by damage_control.py)."""
+        headers = {
+            "User-Agent": self.session.headers.get("User-Agent", "CFWBot/1.0"),
+            "Referer": f"{self.OLD_URL}/",
+        }
+        modhash = self._get_modhash()
+        if modhash:
+            headers["X-Modhash"] = modhash
+        if self._token_v2:
+            headers["Authorization"] = f"Bearer {self._token_v2}"
+        return headers
+
     def _get_modhash(self) -> str:
         """Get a fresh modhash if needed."""
         if self._modhash:

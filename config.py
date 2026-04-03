@@ -1,6 +1,7 @@
 """
-Chicago Fleet Wraps Reddit Bot — Configuration v2.0
-Optimized for faster warming, smarter scanning, and maximum efficiency.
+Chicago Fleet Wraps Reddit Bot — Configuration v3.0
+Tightened warming to stay on-target: car, Chicago, and business subs only.
+No more random subs like r/Showerthoughts.
 """
 import os
 from datetime import datetime
@@ -19,55 +20,66 @@ REDDIT_USERNAME = os.environ.get("REDDIT_USERNAME", "AddressRadiant8768")
 # ─────────────────────────────────────────────
 # Anti-Ban Operational Parameters
 # ─────────────────────────────────────────────
-MAX_THREAD_AGE_HOURS = 12         # Expanded from 6 — more opportunities
-MAX_THREAD_COMMENTS = 50          # Expanded from 20 — bigger threads = more visibility
-MAX_COMMENTS_PER_DAY = 8          # Increased from 4 — still safe, Reddit allows ~15-20/day for established accounts
-MAX_COMMENTS_PER_SUB_PER_DAY = 1  # Keep strict — never more than 1 per sub
-PROMO_RATIO = 0.10                # 10% of comments mention CFW
-MIN_DELAY_BETWEEN_COMMENTS = 120  # Reduced from 300 — 2 minutes is natural
-MAX_DELAY_BETWEEN_COMMENTS = 420  # Reduced from 900 — 7 minutes max
+MAX_THREAD_AGE_HOURS = 12
+MAX_THREAD_COMMENTS = 50
+MAX_COMMENTS_PER_DAY = 8
+MAX_COMMENTS_PER_SUB_PER_DAY = 1
+PROMO_RATIO = 0.10
+MIN_DELAY_BETWEEN_COMMENTS = 120
+MAX_DELAY_BETWEEN_COMMENTS = 420
 
 # ─────────────────────────────────────────────
-# Account Warming Parameters (OPTIMIZED)
+# Account Warming Parameters
 # ─────────────────────────────────────────────
-WARMING_KARMA_THRESHOLD = 50      # Reduced from 100 — 50 is enough to post in most subs
-WARMING_COMMENTS_PER_CYCLE = 5    # Increased from 2 — post 5 per cycle during warming
-WARMING_MAX_PER_DAY = 15          # Higher daily cap during warming phase
+WARMING_KARMA_THRESHOLD = 50
+WARMING_COMMENTS_PER_CYCLE = 5
+WARMING_MAX_PER_DAY = 15
 
-# High-karma subreddits: these are the best for fast karma because
-# they have massive traffic, upvote generously, and welcome short comments
+# WARMING SUBREDDITS — v3.0: Tightened to stay on-target
+# Even during warming, we build credibility where our customers are.
+# No more random subs. Every comment builds toward our niche.
 WARMING_SUBREDDITS = [
-    # Tier A: Massive traffic, easy karma (short relatable comments get 10-100+ upvotes)
-    "AskReddit",
-    "mildlyinteresting",
-    "Showerthoughts",
-    "todayilearned",
-    "LifeProTips",
-    "explainlikeimfive",
-    # Tier B: Friendly communities, good engagement
-    "CasualConversation",
-    "NoStupidQuestions",
-    "TooAfraidToAsk",
-    "DoesAnybodyElse",
-    # Tier C: Niche but high-engagement (car-adjacent, builds credibility)
-    "Autos",
+    # Tier A: Car enthusiast subs (high traffic, our people)
     "cars",
-    "Justrolledintotheshop",
-    "IdiotsInCars",
+    "Autos",
     "carporn",
-    # Tier D: Chicago local (builds local presence naturally)
+    "IdiotsInCars",
+    "Justrolledintotheshop",
+    "Cartalk",
+    "MechanicAdvice",
+    "projectcar",
+    "AutoDetailing",
+    # Tier B: Specific vehicle subs (future wrap customers)
+    "Trucks",
+    "f150",
+    "ram_trucks",
+    "Rivian",
+    "TeslaMotors",
+    "BMW",
+    "Porsche",
+    "Mustang",
+    "Corvette",
+    "WRX",
+    "Charger",
+    # Tier C: Chicago local (build local presence)
     "chicago",
     "ChicagoSuburbs",
+    "ChicagoList",
+    # Tier D: Business/fleet owners (commercial customers)
+    "smallbusiness",
+    "Entrepreneur",
+    "foodtrucks",
+    "vandwellers",
+    "sweatystartup",
 ]
 
-# Warming thread selection: target threads that are "hot" (2-6 hours old, 
-# 5-50 comments, rising score) — these get the most eyeballs on your comment
-WARMING_MIN_SCORE = 5             # Only comment on threads with some traction
-WARMING_MAX_EXISTING_COMMENTS = 100  # Can be bigger threads during warming
-WARMING_PREFER_RISING = True      # Prefer /rising over /new for warming
+# Warming thread selection
+WARMING_MIN_SCORE = 5
+WARMING_MAX_EXISTING_COMMENTS = 100
+WARMING_PREFER_RISING = True
 
 # ─────────────────────────────────────────────
-# Target Subreddits — Tiered
+# Target Subreddits — Tiered (for normal mode)
 # ─────────────────────────────────────────────
 TIER1_LOCAL = [
     "chicago",
@@ -219,7 +231,7 @@ def get_seasonal_config():
 # Thread Creation (post-warming, 250+ karma)
 # ─────────────────────────────────────────────
 THREAD_CREATION_KARMA_THRESHOLD = 250
-THREADS_PER_WEEK = 2  # Increased from 1
+THREADS_PER_WEEK = 2
 
 # ─────────────────────────────────────────────
 # Business Facts (for AI prompt)

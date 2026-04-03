@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-Chicago Fleet Wraps Reddit Bot v2.1 -- Main Orchestrator
-Optimized for faster warming, smarter scanning, and maximum efficiency.
-All print statements use flush=True for GitHub Actions visibility.
+Chicago Fleet Wraps Reddit Bot v3.0 -- Main Orchestrator
+NEW: Context-first pipeline. Before responding, the bot:
+  1. Fetches the thread's top-voted comments
+  2. Analyzes what style/tone earns karma
+  3. Passes that context to the AI so it mirrors winning patterns
+  4. Ensures accuracy and relevance before posting
 
 Usage:
   python bot.py                  # Full auto run
@@ -34,6 +37,7 @@ from reddit_session import RedditSession
 from scanner import (
     find_opportunities, save_posted_thread,
     get_thread_comments, check_for_competitor_mentions,
+    fetch_thread_context,
     set_session as set_scanner_session,
 )
 from ai_responder import (
@@ -55,9 +59,7 @@ def log(msg: str):
 
 
 def random_delay(min_s: int = None, max_s: int = None):
-    """Wait a random amount of time between actions to appear human.
-    v2.1: Reduced warming delays for faster karma building.
-    """
+    """Wait a random amount of time between actions to appear human."""
     min_s = min_s or MIN_DELAY_BETWEEN_COMMENTS
     max_s = max_s or MAX_DELAY_BETWEEN_COMMENTS
     delay = random.randint(min_s, max_s)
@@ -75,18 +77,16 @@ def get_reddit_session() -> RedditSession:
 
 
 def run_warming_cycle(rs: RedditSession):
-    """Run account warming: post casual comments in high-traffic subreddits.
-    
-    v2.1 optimizations:
-    - Posts up to 5 comments per cycle
-    - Targets rising/hot threads for maximum visibility
-    - Uses varied personas and styles for natural-looking comments
-    - Scores threads by karma potential
-    - Reduced delays between warming comments (30-90s instead of 60-180s)
-    - Better logging for GitHub Actions visibility
+    """Run account warming with FULL CONTEXT AWARENESS.
+
+    v3.0: Before posting any comment, the bot now:
+    1. Fetches the thread's top-voted comments
+    2. Analyzes what style/tone is getting upvoted
+    3. Passes that context to the AI responder
+    4. AI mirrors the winning style for maximum karma potential
     """
     log("=" * 50)
-    log("WARMING CYCLE v2.1 (accelerated)")
+    log("WARMING CYCLE v3.0 (context-aware)")
     log("=" * 50)
 
     karma = rs.get_karma()
@@ -122,7 +122,7 @@ def run_warming_cycle(rs: RedditSession):
         log("No warming opportunities found this cycle.")
         return
 
-    log(f"Found {len(opportunities)} warming opportunities. Starting to post...")
+    log(f"Found {len(opportunities)} warming opportunities. Starting context-aware posting...")
 
     comments_posted = 0
     subs_used = set()
@@ -132,7 +132,6 @@ def run_warming_cycle(rs: RedditSession):
             break
 
         sub = thread["subreddit"]
-        # Don't comment in same sub twice per cycle
         if sub in subs_used:
             continue
 
@@ -147,9 +146,33 @@ def run_warming_cycle(rs: RedditSession):
         log(f"  Score: {thread.get('score', 0)} | Comments: {thread['num_comments']}")
 
         try:
-            log(f"  Generating warming comment...")
-            comment = generate_warming_comment(thread["title"], thread["body"], sub)
-            log(f"  Generated ({len(comment)} chars): \"{comment[:100]}...\"")
+            # v3.0: FETCH THREAD CONTEXT before generating response
+            log(f"  Fetching thread context (top comments, vibe analysis)...")
+            thread_context = fetch_thread_context(thread["url"])
+            time.sleep(1)  # rate limit
+
+            vibe = thread_context.get("thread_vibe", "unknown")
+            avg_len = thread_context.get("avg_comment_length", 0)
+            style = thread_context.get("top_comment_style", "no data")
+            top_count = len(thread_context.get("top_comments", []))
+
+            log(f"  Context: vibe={vibe}, avg_comment_len={avg_len}w, top_comments={top_count}")
+            log(f"  Style: {style[:80]}")
+
+            # Check if we already commented (using context data)
+            our_username = REDDIT_USERNAME.lower()
+            for c in thread_context.get("top_comments", []):
+                if c.get("author", "").lower() == our_username:
+                    log(f"  Already commented in this thread, skipping.")
+                    save_posted_thread(thread["id"])
+                    continue
+
+            log(f"  Generating context-aware warming comment...")
+            comment = generate_warming_comment(
+                thread["title"], thread["body"], sub,
+                thread_context=thread_context
+            )
+            log(f"  Generated ({len(comment)} chars): \"{comment[:120]}\"")
 
             log(f"  Posting to r/{sub}...")
             success = post_comment(rs, thread["id"], comment)
@@ -164,10 +187,9 @@ def run_warming_cycle(rs: RedditSession):
         except Exception as e:
             log(f"  Error: {e}")
 
-        # v2.1: Shorter delays during warming (30-90s) for faster karma building
-        # Still human-like but more aggressive than v2.0
+        # Human-like delay between comments
         if comments_posted < comments_to_post:
-            delay = random.randint(30, 90)
+            delay = random.randint(45, 120)
             log(f"  Waiting {delay}s before next comment...")
             time.sleep(delay)
 
@@ -181,8 +203,8 @@ def run_warming_cycle(rs: RedditSession):
 
 
 def run_normal_cycle(rs: RedditSession):
-    """Run one normal cycle: scan target subs, classify, generate, and post."""
-    log("Starting NORMAL cycle...")
+    """Run one normal cycle with FULL CONTEXT AWARENESS."""
+    log("Starting NORMAL cycle v3.0 (context-aware)...")
     seasonal = get_seasonal_config()
     log(f"Season: {seasonal['note']}")
 
@@ -222,19 +244,40 @@ def run_normal_cycle(rs: RedditSession):
             log("  Skipping (irrelevant or low confidence)")
             continue
 
+        # v3.0: Fetch thread context BEFORE generating response
+        log(f"  Fetching thread context...")
+        thread_context = fetch_thread_context(thread["url"])
+        time.sleep(1)
+
+        vibe = thread_context.get("thread_vibe", "unknown")
+        style = thread_context.get("top_comment_style", "no data")
+        log(f"  Context: vibe={vibe}, style={style[:60]}")
+
+        # Check if we already commented
+        our_username = REDDIT_USERNAME.lower()
+        already_commented = False
+        for c in thread_context.get("top_comments", []):
+            if c.get("author", "").lower() == our_username:
+                already_commented = True
+                break
+        # Also check all comment texts
+        for ct in thread_context.get("all_comment_texts", []):
+            if our_username in ct.lower():
+                already_commented = True
+                break
+
+        if already_commented:
+            log("  Already commented in this thread, skipping.")
+            save_posted_thread(thread["id"])
+            continue
+
         is_promo = ai_says_mention and should_be_promo()
         if category in ("direct_recommendation", "competitor_mention") and ai_says_mention:
             is_promo = True
 
-        existing_comments = get_thread_comments(thread["url"])
-        time.sleep(1)
+        existing_comments = [c["body"] for c in thread_context.get("top_comments", [])[:5]]
 
-        our_comments = [c for c in existing_comments if REDDIT_USERNAME.lower() in c.lower()]
-        if our_comments:
-            log("  Already commented in this thread, skipping.")
-            continue
-
-        log(f"  Generating {'PROMO' if is_promo else 'VALUE'} comment...")
+        log(f"  Generating {'PROMO' if is_promo else 'VALUE'} comment (context-aware)...")
         comment = generate_comment(
             title=thread["title"],
             body=thread["body"],
@@ -242,9 +285,10 @@ def run_normal_cycle(rs: RedditSession):
             category=category,
             should_mention_cfw=is_promo,
             existing_comments=existing_comments,
+            thread_context=thread_context,
         )
 
-        log(f"  Generated: \"{comment[:100]}...\"")
+        log(f"  Generated: \"{comment[:120]}\"")
 
         success = post_comment(rs, thread["id"], comment)
         if success:
@@ -357,46 +401,43 @@ def run_thread_creation(rs: RedditSession):
 
 
 def run_scan_only():
-    """Dry run: scan and classify without posting anything."""
-    log("Starting SCAN-ONLY (dry run)...")
+    """Dry run: scan, fetch context, classify, and generate — without posting."""
+    log("Starting SCAN-ONLY v3.0 (with context analysis)...")
 
-    opportunities = find_opportunities(mode="normal")
+    opportunities = find_opportunities(mode="warming")
     if not opportunities:
         log("No opportunities found.")
         return
 
-    log(f"\nFound {len(opportunities)} opportunities:\n")
+    log(f"\nFound {len(opportunities)} opportunities. Analyzing top 5:\n")
 
-    for i, thread in enumerate(opportunities[:15], 1):
-        classification = classify_thread(
-            title=thread["title"],
-            body=thread["body"],
-            subreddit=thread["subreddit"],
+    for i, thread in enumerate(opportunities[:5], 1):
+        # Fetch thread context
+        thread_context = fetch_thread_context(thread["url"])
+        time.sleep(1)
+
+        vibe = thread_context.get("thread_vibe", "unknown")
+        avg_len = thread_context.get("avg_comment_length", 0)
+        style = thread_context.get("top_comment_style", "no data")
+        top_comments = thread_context.get("top_comments", [])
+
+        # Generate sample comment
+        sample_comment = generate_warming_comment(
+            thread["title"], thread["body"], thread["subreddit"],
+            thread_context=thread_context
         )
 
-        category = classification.get("category", "irrelevant")
-        confidence = classification.get("confidence", 0)
-        mention = classification.get("should_mention_cfw", False)
-
-        if category != "irrelevant" and confidence >= 40:
-            sample_comment = generate_comment(
-                title=thread["title"],
-                body=thread["body"],
-                subreddit=thread["subreddit"],
-                category=category,
-                should_mention_cfw=mention,
-            )
-        else:
-            sample_comment = "(would skip)"
-
         print(f"\n{'='*60}", flush=True)
-        print(f"  #{i} | Score: {thread.get('opportunity_score', 0)}", flush=True)
+        print(f"  #{i} | Score: {thread.get('warming_score', thread.get('opportunity_score', 0)):.0f}", flush=True)
         print(f"  Sub: r/{thread['subreddit']}", flush=True)
         print(f"  Title: {thread['title'][:70]}", flush=True)
-        print(f"  Comments: {thread['num_comments']} | Category: {category} | Confidence: {confidence}", flush=True)
-        print(f"  Mention CFW: {'YES' if mention else 'no'}", flush=True)
+        print(f"  Thread vibe: {vibe} | Avg comment length: {avg_len}w", flush=True)
+        print(f"  Top comment style: {style[:70]}", flush=True)
+        print(f"  Top comments in thread: {len(top_comments)}", flush=True)
+        if top_comments:
+            print(f"  Highest-voted: [{top_comments[0]['score']}pts] {top_comments[0]['body'][:80]}...", flush=True)
         print(f"  URL: {thread['url']}", flush=True)
-        print(f"  Sample response: \"{sample_comment[:150]}...\"", flush=True)
+        print(f"  SAMPLE RESPONSE: \"{sample_comment}\"", flush=True)
 
     log("Dry run complete.")
 
@@ -404,7 +445,8 @@ def run_scan_only():
 def main():
     """Main entry point."""
     print(f"\n{'='*60}", flush=True)
-    print(f"  CHICAGO FLEET WRAPS -- REDDIT BOT v2.1", flush=True)
+    print(f"  CHICAGO FLEET WRAPS -- REDDIT BOT v3.0", flush=True)
+    print(f"  Context-Aware | Style-Mirroring | Accuracy-First", flush=True)
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
     print(f"{'='*60}\n", flush=True)
 
@@ -434,7 +476,7 @@ def main():
         run_dm_followup(rs)
     elif mode == "auto":
         if karma < WARMING_KARMA_THRESHOLD:
-            log(f"Karma ({karma}) below {WARMING_KARMA_THRESHOLD} -- running ACCELERATED warming cycle")
+            log(f"Karma ({karma}) below {WARMING_KARMA_THRESHOLD} -- running context-aware warming cycle")
             run_warming_cycle(rs)
         else:
             log(f"Karma ({karma}) sufficient -- running normal cycle")

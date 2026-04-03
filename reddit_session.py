@@ -113,7 +113,7 @@ class RedditSession:
                     self._logged_in = True
                     karma = data.get("data", {}).get("comment_karma", 0) + \
                             data.get("data", {}).get("link_karma", 0)
-                    print(f"  [AUTH] Verified! Logged in as u/{name} (karma: {karma}, flush=True)")
+                    print(f"  [AUTH] Verified! Logged in as u/{name} (karma: {karma})", flush=True)
                     return True
 
             # Try with bearer token if available

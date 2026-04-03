@@ -50,7 +50,7 @@ jobs:
       - name: Run multi-agent orchestrator
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          FACEBOOK_PAGE_TOKEN: ${{ secrets.FACEBOOK_PAGE_TOKEN }}
+          FACEBOOK_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
         run: python orchestrator.py pipeline
 

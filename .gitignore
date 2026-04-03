@@ -1,0 +1,16 @@
+# Data and logs (contain sensitive info)
+data/
+logs/
+
+# Environment
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+
+# Legacy browser automation
+browser_post.py

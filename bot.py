@@ -252,8 +252,8 @@ def run_warming_cycle(rs: RedditSession):
                 log(f"  POSTED! ({comments_posted}/{comments_to_post})")
 
                 # v5.0: Register for damage control monitoring
-                register_post("reddit", thread["id"], comment,
-                              topic=thread["title"][:100], url=thread.get("url", ""))
+                register_post("reddit", thread["id"], thread["title"][:100],
+                              caption=comment, url=thread.get("url", ""))
 
                 # v5.0: Log competitor mention if applicable
                 if thread.get("competitor_mentioned"):
@@ -427,8 +427,8 @@ def run_normal_cycle(rs: RedditSession):
             comments_posted += 1
             log(f"  Posted! ({comments_posted} today)")
 
-            register_post("reddit", thread["id"], comment,
-                          topic=thread["title"][:100], url=thread.get("url", ""))
+            register_post("reddit", thread["id"], thread["title"][:100],
+                          caption=comment, url=thread.get("url", ""))
 
             if thread.get("competitor_mentioned"):
                 log_competitor_mention(thread, responded=True)

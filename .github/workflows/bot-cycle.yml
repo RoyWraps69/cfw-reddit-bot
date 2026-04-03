@@ -1,0 +1,66 @@
+name: CFW Bot — Main Cycle
+
+on:
+  schedule:
+    # Every 45 minutes, 7 AM to 11 PM Chicago time (UTC-5/6)
+    # Chicago is UTC-6 in winter, UTC-5 in summer
+    # Running 12:00 UTC to 04:00 UTC covers 7AM-11PM CT
+    - cron: '0,45 12-23 * * *'
+    - cron: '0,45 0-4 * * *'
+
+  # Allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Bot mode'
+        required: false
+        default: 'auto'
+        type: choice
+        options: [auto, warming, scan-only, reply-check, dm-check, status]
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run bot cycle
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          ROY_PHONE_NUMBER: ${{ secrets.ROY_PHONE_NUMBER }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          NETLIFY_WEBHOOK_URL: ${{ secrets.NETLIFY_WEBHOOK_URL }}
+        run: |
+          MODE="${{ github.event.inputs.mode || 'auto' }}"
+          echo "Running bot in mode: $MODE"
+          python bot.py $MODE
+
+      - name: Upload data artifacts (preserve state between runs)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bot-data-${{ github.run_number }}
+          path: |
+            data/
+            logs/
+          retention-days: 7
+          overwrite: true

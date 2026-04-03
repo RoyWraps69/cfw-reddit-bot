@@ -1,0 +1,53 @@
+name: CFW Bot — Daily Optimizer
+
+on:
+  schedule:
+    # 6:00 AM Chicago time = 12:00 UTC (winter) / 11:00 UTC (summer)
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+jobs:
+  daily-optimizer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: pip install -r requirements.txt
+
+      - name: Run daily optimizer
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          ROY_PHONE_NUMBER: ${{ secrets.ROY_PHONE_NUMBER }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python self_optimizer.py
+
+      - name: Send morning brief to Roy
+        env:
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          ROY_PHONE_NUMBER: ${{ secrets.ROY_PHONE_NUMBER }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python -c "from lead_alert import send_morning_brief; send_morning_brief()"
+
+      - name: Sync GBP Reviews
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GBP_ACCESS_TOKEN: ${{ secrets.GBP_ACCESS_TOKEN }}
+          GBP_ACCOUNT_ID: ${{ secrets.GBP_ACCOUNT_ID }}
+          GBP_LOCATION_ID: ${{ secrets.GBP_LOCATION_ID }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          ROY_PHONE_NUMBER: ${{ secrets.ROY_PHONE_NUMBER }}
+        run: python -c "from google_business_profile import run_review_response_cycle; run_review_response_cycle()"

@@ -1,2 +1,4 @@
-web: python master_runner.py run
-webhook: gunicorn calculator_webhook:app --bind 0.0.0.0:$PORT --workers 2 --timeout 60
+# Bot runs via GitHub Actions (see .github/workflows/)
+# Netlify Functions handle webhooks (see netlify/functions/)
+# To run locally: python bot.py auto
+bot: python bot.py auto

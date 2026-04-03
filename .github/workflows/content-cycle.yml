@@ -1,0 +1,91 @@
+name: CFW Bot — Content & SEO
+
+on:
+  schedule:
+    # Tuesday, Thursday, Saturday at 9 AM Chicago time (15:00 UTC)
+    - cron: '0 15 * * 2,4,6'
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to generate for'
+        required: false
+        default: 'tiktok,instagram_reels'
+
+jobs:
+  content-creation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: pip install -r requirements.txt
+
+      - name: Generate content scripts
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RUNWAY_API_KEY: ${{ secrets.RUNWAY_API_KEY }}
+          HEYGEN_API_KEY: ${{ secrets.HEYGEN_API_KEY }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_ROY_VOICE_ID: ${{ secrets.ELEVENLABS_ROY_VOICE_ID }}
+        run: |
+          python -c "
+          from content_creator import generate_weekly_content_calendar, save_content_to_queue
+          import json
+          calendar = generate_weekly_content_calendar()
+          print('Generated content calendar:')
+          for day, items in calendar.items():
+              for item in items:
+                  print(f'  {day}: {item[\"platform\"]} | {item[\"archetype\"]}')
+          with open('data/weekly_calendar.json', 'w') as f:
+              json.dump(calendar, f, indent=2)
+          print('Saved to data/weekly_calendar.json')
+          "
+
+      - name: Run multi-agent orchestrator
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          FACEBOOK_PAGE_TOKEN: ${{ secrets.FACEBOOK_PAGE_TOKEN }}
+          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+        run: python orchestrator.py pipeline
+
+      - name: Generate SEO blog post (Wednesdays only)
+        if: ${{ github.event_name == 'schedule' }}
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          WORDPRESS_URL: ${{ secrets.WORDPRESS_URL }}
+          WORDPRESS_USERNAME: ${{ secrets.WORDPRESS_USERNAME }}
+          WORDPRESS_APP_PASSWORD: ${{ secrets.WORDPRESS_APP_PASSWORD }}
+        run: |
+          DAY=$(date +%u)  # 1=Mon ... 7=Sun, 4=Thu
+          if [ "$DAY" = "4" ]; then
+            echo "Thursday — generating SEO blog post"
+            python -c "from seo_content_engine import run_seo_content_cycle; run_seo_content_cycle(1)"
+          else
+            echo "Not Thursday — skipping SEO post"
+          fi
+
+      - name: Publish weekly GBP post (Mondays only)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GBP_ACCESS_TOKEN: ${{ secrets.GBP_ACCESS_TOKEN }}
+          GBP_ACCOUNT_ID: ${{ secrets.GBP_ACCOUNT_ID }}
+          GBP_LOCATION_ID: ${{ secrets.GBP_LOCATION_ID }}
+        run: |
+          DAY=$(date +%u)
+          if [ "$DAY" = "2" ]; then
+            echo "Tuesday — publishing GBP post"
+            python -c "from google_business_profile import run_weekly_gbp_post; run_weekly_gbp_post()"
+          fi
+
+      - name: Upload content queue
+        uses: actions/upload-artifact@v4
+        with:
+          name: content-${{ github.run_number }}
+          path: data/content_queue/
+          retention-days: 14

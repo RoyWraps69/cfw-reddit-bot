@@ -1,0 +1,77 @@
+name: CFW Bot — Leads & Reviews
+
+on:
+  schedule:
+    # 9 AM, 1 PM, 6 PM Chicago time (15:00, 19:00, 00:00 UTC)
+    - cron: '0 15,19 * * *'
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  leads-and-reviews:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - run: pip install -r requirements.txt
+
+      - name: Send email nurture sequences
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          GOOGLE_REVIEW_LINK: ${{ secrets.GOOGLE_REVIEW_LINK }}
+        run: python -c "from email_nurture import run_email_send_cycle; r = run_email_send_cycle(); print(r)"
+
+      - name: Send review requests to recent customers
+        env:
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
+          GOOGLE_REVIEW_LINK: ${{ secrets.GOOGLE_REVIEW_LINK }}
+          YELP_REVIEW_LINK: ${{ secrets.YELP_REVIEW_LINK }}
+        run: python -c "from review_generator import run_review_request_cycle; r = run_review_request_cycle(); print(r)"
+
+      - name: Intelligence bridge sync
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python -c "from intelligence_bridge import run_daily_sync; run_daily_sync()"
+
+      - name: Weekly CRM + persona report (Fridays only)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          ROY_PHONE_NUMBER: ${{ secrets.ROY_PHONE_NUMBER }}
+        run: |
+          DAY=$(date +%u)
+          if [ "$DAY" = "5" ]; then
+            python -c "
+          from lead_crm import get_crm_report
+          from persona_engine_v2 import get_persona_report
+          report = get_crm_report() + '\n\n' + get_persona_report()
+          print(report)
+          with open('logs/weekly_report.txt', 'w') as f:
+              f.write(report)
+            "
+          fi
+
+      - name: Upload updated data
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: leads-data-${{ github.run_number }}
+          path: |
+            data/leads_crm.json
+            data/review_requests.json
+            data/email_queue.json
+            logs/
+          retention-days: 14

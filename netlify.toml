@@ -1,0 +1,41 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "18"
+
+# ── Redirects ─────────────────────────────────────────────────────────
+
+# Calculator webhook endpoint
+[[redirects]]
+  from = "/webhook/calculator"
+  to = "/.netlify/functions/calculator"
+  status = 200
+
+[[redirects]]
+  from = "/webhook/reddit-lead"
+  to = "/.netlify/functions/reddit-lead"
+  status = 200
+
+[[redirects]]
+  from = "/webhook/review-submitted"
+  to = "/.netlify/functions/review-submitted"
+  status = 200
+
+# API health check
+[[redirects]]
+  from = "/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
+# ── Function settings ─────────────────────────────────────────────────
+[functions]
+  node_bundler = "esbuild"
+
+# Background functions get 15 minutes (for longer tasks)
+[functions."calculator"]
+  timeout = 26
+
+[functions."reddit-lead"]
+  timeout = 26

@@ -72,32 +72,20 @@ class InstagramBot:
             }, f)
 
     async def start(self):
-        from playwright.async_api import async_playwright
-        pw = await async_playwright().start()
-
-        try:
-            self.browser = await pw.chromium.connect_over_cdp("http://localhost:9222")
-            contexts = self.browser.contexts
-            if contexts:
-                self.context = contexts[0]
-                self.page = await self.context.new_page()
-            else:
-                self.context = await self.browser.new_context()
-                self.page = await self.context.new_page()
-            print("  [IG] Connected to browser session", flush=True)
-        except Exception as e:
-            print(f"  [IG] CDP failed, launching fresh: {e}", flush=True)
-            self.browser = await pw.chromium.launch(headless=True)
-            self.context = await self.browser.new_context(
-                user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1",
-                viewport={"width": 430, "height": 932},
-                is_mobile=True,
-            )
-            self.page = await self.context.new_page()
+        """Launch browser with restored Instagram session cookies."""
+        from browser_launcher import launch_browser
+        self._pw, self.browser, self.context, self.page = await launch_browser("instagram")
+        print("  [IG] Browser started with restored session", flush=True)
 
     async def stop(self):
         if self.page:
-            await self.page.close()
+            try:
+                await self.page.close()
+            except Exception:
+                pass
+        if hasattr(self, '_pw') and self._pw:
+            from browser_launcher import close_browser
+            await close_browser(self._pw, self.browser)
 
     # ─────────────────────────────────────────
     # MAIN CYCLE

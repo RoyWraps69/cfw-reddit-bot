@@ -82,23 +82,22 @@ jobs:
       - name: Write Reddit cookies
         run: echo '${{ secrets.REDDIT_COOKIES_JSON }}' > data/reddit_cookies.json
 
-      - name: Write Facebook auth
-        if: env.FACEBOOK_AUTH_JSON != ''
+      - name: Decrypt social media cookies
         env:
-          FACEBOOK_AUTH_JSON: ${{ secrets.FACEBOOK_AUTH_JSON }}
-        run: echo "${FACEBOOK_AUTH_JSON}" > data/facebook_auth.json
-
-      - name: Write Instagram auth
-        if: env.INSTAGRAM_AUTH_JSON != ''
-        env:
-          INSTAGRAM_AUTH_JSON: ${{ secrets.INSTAGRAM_AUTH_JSON }}
-        run: echo "${INSTAGRAM_AUTH_JSON}" > data/instagram_auth.json
-
-      - name: Write TikTok auth
-        if: env.TIKTOK_AUTH_JSON != ''
-        env:
-          TIKTOK_AUTH_JSON: ${{ secrets.TIKTOK_AUTH_JSON }}
-        run: echo "${TIKTOK_AUTH_JSON}" > data/tiktok_auth.json
+          COOKIE_KEY: ${{ secrets.COOKIE_KEY }}
+        run: |
+          if [ -f data/fb_cookies.enc ] && [ -n "$COOKIE_KEY" ]; then
+            openssl enc -aes-256-cbc -d -salt -pbkdf2 -in data/fb_cookies.enc -out data/fb_cookies.json -pass pass:$COOKIE_KEY
+            echo "Facebook cookies decrypted"
+          fi
+          if [ -f data/ig_cookies.enc ] && [ -n "$COOKIE_KEY" ]; then
+            openssl enc -aes-256-cbc -d -salt -pbkdf2 -in data/ig_cookies.enc -out data/ig_cookies.json -pass pass:$COOKIE_KEY
+            echo "Instagram cookies decrypted"
+          fi
+          if [ -f data/tt_cookies.enc ] && [ -n "$COOKIE_KEY" ]; then
+            openssl enc -aes-256-cbc -d -salt -pbkdf2 -in data/tt_cookies.enc -out data/tt_cookies.json -pass pass:$COOKIE_KEY
+            echo "TikTok cookies decrypted"
+          fi
 
       - name: Run engine
         env:

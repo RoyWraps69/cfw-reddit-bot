@@ -1,6 +1,10 @@
 # Data and logs (contain sensitive info)
 data/
+!data/*.enc
 logs/
+
+# Raw cookie files (never commit)
+*_cookies.json
 
 # Environment
 .env

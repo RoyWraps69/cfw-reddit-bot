@@ -3,12 +3,18 @@ Chicago Fleet Wraps Reddit Bot — AI Response Generator v2.0
 Optimized for higher-quality warming comments that actually get upvotes,
 plus persona variety and smarter response generation.
 """
+import os
 import json
 import random
 from openai import OpenAI
 from config import OPENAI_MODEL, BUSINESS_CONTEXT, COMPETITORS
 
-client = OpenAI()
+# Support custom base URL for API proxy (e.g., Manus proxy)
+base_url = os.environ.get("OPENAI_BASE_URL", None)
+if base_url:
+    client = OpenAI(base_url=base_url)
+else:
+    client = OpenAI()
 
 WARMING_PERSONAS = [
     "You're a 35-year-old guy from Chicago who works in the trades. You're funny, down to earth, and use casual language. You like cars, sports, and grilling.",

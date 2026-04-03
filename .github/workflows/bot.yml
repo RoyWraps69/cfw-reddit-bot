@@ -31,6 +31,12 @@ on:
           - damage-check
           - status
 
+# Grant write permissions for pushing to gh-pages and deploying
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 jobs:
   run-engine:
     runs-on: ubuntu-latest
@@ -39,6 +45,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -131,6 +139,36 @@ jobs:
             data/
             logs/
           key: engine-state-${{ github.run_number }}
+
+      - name: Deploy dashboard to GitHub Pages
+        if: always()
+        run: |
+          if [ -f logs/unified_dashboard.html ]; then
+            echo "Deploying dashboard to gh-pages..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            
+            # Save the dashboard file
+            cp logs/unified_dashboard.html /tmp/index.html
+            
+            # Switch to gh-pages branch
+            git checkout gh-pages 2>/dev/null || git checkout --orphan gh-pages
+            
+            # Clean and replace with new dashboard
+            git rm -rf . 2>/dev/null || true
+            cp /tmp/index.html index.html
+            git add index.html
+            
+            # Commit and push
+            git commit -m "Update dashboard — $(date '+%Y-%m-%d %H:%M')" --allow-empty
+            git push origin gh-pages --force
+            
+            # Switch back to master
+            git checkout master
+            echo "Dashboard deployed to https://roywraps69.github.io/cfw-reddit-bot/"
+          else
+            echo "No dashboard file found, skipping deploy."
+          fi
 
       - name: Upload logs as artifact
         if: always()

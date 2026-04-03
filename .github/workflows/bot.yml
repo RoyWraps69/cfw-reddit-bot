@@ -25,6 +25,7 @@ on:
           - refill
           - post
           - learn
+          - dump-queue
           - warming
           - scan-only
           - create-thread
@@ -137,6 +138,10 @@ jobs:
             full|social|content|engage|analyze|damage|dashboard|refill|post|learn)
               echo "Running master orchestrator in ${MODE} mode..."
               python master.py ${MODE}
+              ;;
+            dump-queue)
+              echo "Dumping content queue..."
+              python dump_queue.py
               ;;
             reddit|warming|scan-only|create-thread|dm-check|replies|track|damage-check|status|auto)
               echo "Running Reddit bot in ${MODE} mode..."

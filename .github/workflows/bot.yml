@@ -1,9 +1,9 @@
 name: CFW Reddit Bot
 
 on:
-  # Run every 2 hours
+  # Run every hour for faster warming; will self-regulate via daily limits
   schedule:
-    - cron: '0 */2 * * *'
+    - cron: '0 * * * *'
   
   # Allow manual trigger from GitHub UI
   workflow_dispatch:
@@ -40,7 +40,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Restore bot state
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             data/

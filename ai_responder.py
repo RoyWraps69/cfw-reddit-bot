@@ -1,13 +1,73 @@
 """
-Chicago Fleet Wraps Reddit Bot — AI Response Generator
-Uses OpenAI to generate human-sounding Reddit comments.
+Chicago Fleet Wraps Reddit Bot — AI Response Generator v2.0
+Optimized for higher-quality warming comments that actually get upvotes,
+plus persona variety and smarter response generation.
 """
 import json
 import random
 from openai import OpenAI
 from config import OPENAI_MODEL, BUSINESS_CONTEXT, COMPETITORS
 
-client = OpenAI()  # API key and base URL pre-configured via env
+client = OpenAI()
+
+WARMING_PERSONAS = [
+    "You're a 35-year-old guy from Chicago who works in the trades. You're funny, down to earth, and use casual language. You like cars, sports, and grilling.",
+    "You're a 40-year-old small business owner from the Chicago suburbs. You're practical, straightforward, and occasionally sarcastic in a friendly way.",
+    "You're a 30-year-old car enthusiast who spends too much time on Reddit. You're knowledgeable about vehicles and enjoy sharing opinions.",
+    "You're a regular Reddit user who gives honest, no-BS answers. You keep it short and real. You're from the Midwest.",
+    "You're a friendly, helpful person who genuinely enjoys answering questions on Reddit. You're concise and add a touch of humor when appropriate.",
+]
+
+WARMING_STYLES = {
+    "witty_short": "Write a short, witty comment (1-2 sentences max). Be clever but not try-hard. The best Reddit comments are the ones that make people exhale through their nose.",
+    "helpful_answer": "Give a genuinely helpful, direct answer. Lead with the answer, then add one useful detail. Be the comment people upvote because it actually helped.",
+    "relatable": "Say what everyone reading this thread is probably thinking. Be relatable and authentic. Keep it to 1-3 sentences.",
+    "add_context": "Add a useful perspective or detail that others in the thread probably missed. Show you know what you're talking about without being a know-it-all. 2-3 sentences max.",
+    "personal_story": "Share a very brief personal anecdote (2-3 sentences) that's relevant to the thread. Make it specific enough to feel real, not generic.",
+}
+
+
+def generate_warming_comment(title: str, body: str, subreddit: str) -> str:
+    """Generate a casual comment for account warming -- optimized for upvotes."""
+    persona = random.choice(WARMING_PERSONAS)
+    style_name = random.choice(list(WARMING_STYLES.keys()))
+    style_instruction = WARMING_STYLES[style_name]
+
+    prompt = f"""{persona}
+
+You are browsing Reddit and came across this post. Write a comment that feels completely natural.
+
+Subreddit: r/{subreddit}
+Title: {title}
+Body: {body[:500]}
+
+STYLE: {style_instruction}
+
+CRITICAL RULES:
+- Do NOT mention anything about vehicle wraps, cars, or your job unless the thread is specifically about that
+- Do NOT be overly positive or enthusiastic -- real Reddit comments are often understated
+- Do NOT use exclamation marks more than once (if at all)
+- Do NOT start with "I" -- vary your openings
+- Do NOT use phrases like "This!", "So much this!", "Came here to say this"
+- Do NOT use emojis
+- Keep it under 50 words
+- Sound like a real person, not an AI
+- Match the tone and energy of the subreddit
+
+Write ONLY the comment text. Nothing else."""
+
+    response = client.chat.completions.create(
+        model=OPENAI_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.95,
+        max_tokens=120,
+    )
+
+    comment = response.choices[0].message.content.strip().strip('"').strip("'")
+    comment = comment.replace("As someone who", "Someone who")
+    if comment.startswith("Honestly, ") and random.random() > 0.3:
+        comment = comment[10:]
+    return comment
 
 
 def classify_thread(title: str, body: str, subreddit: str) -> dict:
@@ -15,15 +75,15 @@ def classify_thread(title: str, body: str, subreddit: str) -> dict:
     prompt = f"""You are analyzing a Reddit thread to decide how a vehicle wrap expert should respond.
 
 Thread title: {title}
-Thread body: {body}
+Thread body: {body[:500]}
 Subreddit: r/{subreddit}
 
 Classify this thread into one of these categories:
-1. "direct_recommendation" — User is explicitly asking for a wrap shop recommendation (especially in Chicago area)
-2. "competitor_mention" — User or comments mention one of these competitors: {', '.join(COMPETITORS)}
-3. "general_wrap_question" — User is asking a general question about wraps (cost, durability, care, etc.)
-4. "vehicle_specific" — User is discussing wrapping a specific vehicle (Rivian, Tesla, etc.)
-5. "irrelevant" — Thread is not related to vehicle wraps at all
+1. "direct_recommendation" -- User is explicitly asking for a wrap shop recommendation (especially in Chicago area)
+2. "competitor_mention" -- User or comments mention one of these competitors: {', '.join(COMPETITORS)}
+3. "general_wrap_question" -- User is asking a general question about wraps (cost, durability, care, etc.)
+4. "vehicle_specific" -- User is discussing wrapping a specific vehicle (Rivian, Tesla, etc.)
+5. "irrelevant" -- Thread is not related to vehicle wraps at all
 
 Also determine:
 - should_mention_cfw: true/false (only true for direct_recommendation or competitor_mention)
@@ -40,53 +100,63 @@ Return ONLY valid JSON, no markdown:
         max_tokens=200,
     )
     try:
-        return json.loads(response.choices[0].message.content.strip())
+        result = response.choices[0].message.content.strip()
+        if result.startswith("```"):
+            result = result.split("```")[1]
+            if result.startswith("json"):
+                result = result[4:]
+        return json.loads(result.strip())
     except json.JSONDecodeError:
         return {"category": "irrelevant", "should_mention_cfw": False, "confidence": 0, "reasoning": "Failed to parse"}
 
 
-def generate_comment(title: str, body: str, subreddit: str, category: str, should_mention_cfw: bool, existing_comments: list[str] = None) -> str:
+PROMO_VOICES = {
+    "casual_customer": "You are someone who got their vehicle wrapped at Chicago Fleet Wraps and had a great experience. You're recommending them casually, like telling a friend. Use first-person. Include ONE specific detail from your experience.",
+    "industry_insider": "You are Roy, the owner of Chicago Fleet Wraps. You're active on Reddit and genuinely enjoy helping people. Be transparent -- say 'full disclosure, this is my shop' or 'I'm biased obviously.' Be humble and helpful first, promotional second.",
+    "local_expert": "You are someone from the Chicago area who has researched wrap shops extensively. You're recommending Chicago Fleet Wraps as one of the good options. Mention ONE specific thing that sets them apart (pricing transparency, Rivian experience, etc.).",
+}
+
+
+def generate_comment(title: str, body: str, subreddit: str, category: str, should_mention_cfw: bool, existing_comments: list = None) -> str:
     """Generate a human-sounding Reddit comment based on thread context."""
 
-    # Build the system prompt based on category
     if should_mention_cfw:
-        system_prompt = f"""You are Roy, the owner of a vehicle wrap shop in Chicago. You've been wrapping vehicles since 2014. You're active on Reddit and genuinely enjoy helping people with wrap questions. You are NOT writing marketing copy — you are having a casual conversation on Reddit.
+        voice = random.choice(list(PROMO_VOICES.keys()))
+        system_prompt = f"""{PROMO_VOICES[voice]}
 
-BUSINESS FACTS (use naturally, don't dump all at once):
+BUSINESS FACTS (use naturally, pick ONE or TWO max):
 {BUSINESS_CONTEXT}
 
 RULES:
-- Write like a real person on Reddit. Use casual language. Short sentences. No corporate speak.
+- Write like a real person on Reddit. Casual language. Short sentences. No corporate speak.
 - NEVER include a URL or link. Just mention the business name naturally.
 - NEVER use exclamation marks excessively, emojis, or superlatives like "amazing" or "incredible"
-- Include ONE specific detail that proves you know what you're talking about (a technical detail, a price range, a material name)
 - Keep it under 100 words. Reddit comments that are too long get skipped.
-- If mentioning your shop, be humble about it. Say things like "I'm biased obviously" or "full disclosure, this is my shop" or frame it as a casual suggestion
-- Vary your opening — don't always start the same way
-- If other comments already recommended competitors, acknowledge them positively before suggesting CFW as an alternative
-- NEVER sound like an ad. If it sounds like marketing copy, rewrite it."""
+- If other comments already recommended competitors, acknowledge them positively before suggesting CFW
+- NEVER sound like an ad. If it reads like marketing copy, rewrite it.
+- Vary your opening -- don't start with "I" every time
+- Include ONE specific detail that proves authenticity (a price, a material, a timeline)"""
     else:
-        system_prompt = f"""You are an experienced vehicle wrap installer who has been in the industry for over 10 years in the Chicago area. You're active on Reddit and genuinely enjoy helping people with wrap questions. You are NOT promoting any business — you are just sharing your expertise.
+        system_prompt = """You are an experienced vehicle wrap installer who has been in the industry for over 10 years in the Chicago area. You're active on Reddit and genuinely enjoy helping people with wrap questions. You are NOT promoting any business -- you are just sharing your expertise.
 
 RULES:
-- Write like a real person on Reddit. Use casual language. Short sentences.
+- Write like a real person on Reddit. Casual language. Short sentences.
 - Do NOT mention any specific shop or business name. This is a pure value comment.
 - Include specific technical details that show real expertise (vinyl brands, techniques, price ranges, durability facts)
 - Keep it under 80 words. Be concise and helpful.
-- Vary your opening — don't always start the same way
+- Vary your opening -- don't always start the same way
 - NEVER use exclamation marks excessively, emojis, or superlatives
 - Answer the question directly, then add one useful tip they didn't ask about"""
 
-    # Add existing comments context if available
     existing_context = ""
     if existing_comments:
-        existing_context = f"\n\nOther comments already posted in this thread:\n" + "\n".join([f"- {c[:100]}" for c in existing_comments[:5]])
+        existing_context = "\n\nOther comments already posted in this thread:\n" + "\n".join([f"- {c[:100]}" for c in existing_comments[:5]])
 
     user_prompt = f"""Write a Reddit comment replying to this thread:
 
 Subreddit: r/{subreddit}
 Title: {title}
-Body: {body}
+Body: {body[:500]}
 Category: {category}
 {existing_context}
 
@@ -98,29 +168,12 @@ Write ONLY the comment text. No quotes, no "Here's my response:", just the raw c
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.85,  # Higher temp for more natural variation
+        temperature=0.85,
         max_tokens=250,
     )
-    return response.choices[0].message.content.strip().strip('"')
 
-
-def generate_warming_comment(title: str, body: str, subreddit: str) -> str:
-    """Generate a casual comment for account warming in non-target subreddits."""
-    prompt = f"""Write a short, casual Reddit comment replying to this thread. You are a regular person browsing Reddit. Be genuine, friendly, maybe a little funny. Keep it under 40 words.
-
-Subreddit: r/{subreddit}
-Title: {title}
-Body: {body}
-
-Write ONLY the comment text. No quotes."""
-
-    response = client.chat.completions.create(
-        model=OPENAI_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.95,
-        max_tokens=100,
-    )
-    return response.choices[0].message.content.strip().strip('"')
+    comment = response.choices[0].message.content.strip().strip('"').strip("'")
+    return comment
 
 
 def generate_dm_message(username: str, their_comment: str, original_thread_title: str) -> str:
@@ -172,7 +225,12 @@ Return ONLY valid JSON:
         max_tokens=400,
     )
     try:
-        return json.loads(response.choices[0].message.content.strip())
+        result = response.choices[0].message.content.strip()
+        if result.startswith("```"):
+            result = result.split("```")[1]
+            if result.startswith("json"):
+                result = result[4:]
+        return json.loads(result.strip())
     except json.JSONDecodeError:
         return None
 

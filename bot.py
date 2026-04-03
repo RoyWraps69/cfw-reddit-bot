@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-Chicago Fleet Wraps Reddit Bot — Main Orchestrator
-Runs the full bot cycle: scan → classify → respond → track.
-Designed to run on Railway or any server via cron/scheduler.
+Chicago Fleet Wraps Reddit Bot v2.0 -- Main Orchestrator
+Optimized for faster warming, smarter scanning, and maximum efficiency.
 
 Usage:
-  python3.11 bot.py                  # Full auto run
-  python3.11 bot.py warming          # Account warming mode
-  python3.11 bot.py scan-only        # Scan only, no posting (dry run)
-  python3.11 bot.py dm-check         # Check for DM follow-up opportunities
-  python3.11 bot.py create-thread    # Create a proactive thread
-  python3.11 bot.py status           # Show daily activity summary
+  python bot.py                  # Full auto run
+  python bot.py warming          # Account warming mode
+  python bot.py scan-only        # Scan only, no posting (dry run)
+  python bot.py dm-check         # Check for DM follow-up opportunities
+  python bot.py create-thread    # Create a proactive thread
+  python bot.py status           # Show daily activity summary
 """
 import sys
 import os
@@ -19,14 +18,15 @@ import random
 import json
 from datetime import datetime
 
-# Ensure we can import from the project directory
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import (
     REDDIT_USERNAME, MAX_COMMENTS_PER_DAY, PROMO_RATIO,
     WARMING_KARMA_THRESHOLD, THREAD_CREATION_KARMA_THRESHOLD,
+    WARMING_COMMENTS_PER_CYCLE, WARMING_MAX_PER_DAY,
     THREADS_PER_WEEK, DATA_DIR, LOG_DIR,
     TIER1_LOCAL, TIER2_VEHICLE, TIER3_COMMERCIAL, INDUSTRY_SUBS,
+    MIN_DELAY_BETWEEN_COMMENTS, MAX_DELAY_BETWEEN_COMMENTS,
     get_seasonal_config,
 )
 from reddit_session import RedditSession
@@ -38,7 +38,7 @@ from ai_responder import (
     classify_thread, generate_comment, generate_warming_comment,
     generate_dm_message, generate_thread_post, check_positive_reply,
 )
-from poster import post_comment, send_dm, create_thread, random_delay
+from poster import post_comment, send_dm, create_thread
 from tracker import (
     can_comment, can_comment_in_sub, should_be_promo,
     record_comment, record_dm, record_thread_created,
@@ -52,60 +52,104 @@ def log(msg: str):
     print(f"  [{ts}] {msg}")
 
 
+def random_delay(min_s: int = None, max_s: int = None):
+    """Wait a random amount of time between actions to appear human."""
+    min_s = min_s or MIN_DELAY_BETWEEN_COMMENTS
+    max_s = max_s or MAX_DELAY_BETWEEN_COMMENTS
+    delay = random.randint(min_s, max_s)
+    log(f"Waiting {delay}s before next action...")
+    time.sleep(delay)
+
+
 def get_reddit_session() -> RedditSession:
     """Create and authenticate a Reddit session using cookies."""
     session = RedditSession(REDDIT_USERNAME)
     if not session.login():
         log("ERROR: Failed to log in to Reddit! Check your cookies.")
         sys.exit(1)
-
     return session
 
 
 def run_warming_cycle(rs: RedditSession):
-    """Run account warming: post casual comments in non-target subreddits."""
-    log("Starting WARMING cycle...")
+    """Run account warming: post casual comments in high-traffic subreddits.
+    
+    v2.0 optimizations:
+    - Posts up to 5 comments per cycle (was 2)
+    - Targets rising/hot threads for maximum visibility
+    - Uses varied personas and styles for natural-looking comments
+    - Scores threads by karma potential
+    """
+    log("Starting WARMING cycle (v2.0 -- accelerated)...")
 
     karma = rs.get_karma()
-    log(f"Current karma: {karma}")
+    log(f"Current karma: {karma} (threshold: {WARMING_KARMA_THRESHOLD})")
 
     if karma >= WARMING_KARMA_THRESHOLD:
-        log(f"Karma threshold ({WARMING_KARMA_THRESHOLD}) reached! Switching to normal mode.")
+        log(f"Karma threshold reached! Switching to normal mode.")
         return run_normal_cycle(rs)
 
-    if not can_comment():
-        log("Daily comment limit reached. Stopping.")
+    # Check daily warming limit
+    daily_log_path = os.path.join(LOG_DIR, "daily_activity.json")
+    today_comments = 0
+    if os.path.exists(daily_log_path):
+        try:
+            with open(daily_log_path, "r") as f:
+                dl = json.load(f)
+                if dl.get("date") == str(datetime.now().date()):
+                    today_comments = dl.get("total_comments", 0)
+        except Exception:
+            pass
+
+    remaining = WARMING_MAX_PER_DAY - today_comments
+    if remaining <= 0:
+        log(f"Daily warming limit ({WARMING_MAX_PER_DAY}) reached. Stopping.")
         return
+
+    comments_to_post = min(WARMING_COMMENTS_PER_CYCLE, remaining)
+    log(f"Target: {comments_to_post} warming comments this cycle ({today_comments} posted today)")
 
     opportunities = find_opportunities(mode="warming")
     if not opportunities:
-        log("No warming opportunities found.")
+        log("No warming opportunities found this cycle.")
         return
 
-    random.shuffle(opportunities)
-    targets = opportunities[:2]
+    comments_posted = 0
+    subs_used = set()
 
-    for thread in targets:
-        if not can_comment():
+    for thread in opportunities:
+        if comments_posted >= comments_to_post:
             break
-        if not can_comment_in_sub(thread["subreddit"]):
+
+        sub = thread["subreddit"]
+        # Don't comment in same sub twice per cycle
+        if sub in subs_used:
             continue
 
-        log(f"Warming comment on r/{thread['subreddit']}: {thread['title'][:50]}...")
-        comment = generate_warming_comment(thread["title"], thread["body"], thread["subreddit"])
-        log(f"Generated: \"{comment[:80]}...\"")
+        if not can_comment_in_sub(sub):
+            continue
 
-        success = post_comment(rs, thread["id"], comment)
-        if success:
-            record_comment(thread["subreddit"], thread["id"], is_promo=False, comment_text=comment)
-            save_posted_thread(thread["id"])
-            log("Posted successfully!")
-        else:
-            log("Failed to post. Skipping.")
+        log(f"Warming: r/{sub} -- {thread['title'][:55]}... (score:{thread['score']}, comments:{thread['num_comments']})")
 
-        random_delay()
+        try:
+            comment = generate_warming_comment(thread["title"], thread["body"], sub)
+            log(f"  Generated ({len(comment)} chars): \"{comment[:80]}...\"")
 
-    log("Warming cycle complete.")
+            success = post_comment(rs, thread["id"], comment)
+            if success:
+                record_comment(sub, thread["id"], is_promo=False, comment_text=comment)
+                save_posted_thread(thread["id"])
+                comments_posted += 1
+                subs_used.add(sub)
+                log(f"  Posted! ({comments_posted}/{comments_to_post})")
+            else:
+                log("  Failed to post. Moving on.")
+        except Exception as e:
+            log(f"  Error: {e}")
+
+        # Shorter delays during warming (60-180s) -- still human-like
+        random_delay(60, 180)
+
+    log(f"Warming cycle complete. Posted {comments_posted} comments.")
     print(get_daily_summary())
 
 
@@ -134,8 +178,7 @@ def run_normal_cycle(rs: RedditSession):
             log(f"Already commented in r/{thread['subreddit']} today. Skipping.")
             continue
 
-        # Classify the thread
-        log(f"Classifying: r/{thread['subreddit']} — {thread['title'][:60]}...")
+        log(f"Classifying: r/{thread['subreddit']} -- {thread['title'][:60]}...")
         classification = classify_thread(
             title=thread["title"],
             body=thread["body"],
@@ -152,22 +195,18 @@ def run_normal_cycle(rs: RedditSession):
             log("  Skipping (irrelevant or low confidence)")
             continue
 
-        # Determine promo vs value
         is_promo = ai_says_mention and should_be_promo()
         if category in ("direct_recommendation", "competitor_mention") and ai_says_mention:
             is_promo = True
 
-        # Get existing comments for context
         existing_comments = get_thread_comments(thread["url"])
         time.sleep(1)
 
-        # Check if we already commented
         our_comments = [c for c in existing_comments if REDDIT_USERNAME.lower() in c.lower()]
         if our_comments:
             log("  Already commented in this thread, skipping.")
             continue
 
-        # Generate the comment
         log(f"  Generating {'PROMO' if is_promo else 'VALUE'} comment...")
         comment = generate_comment(
             title=thread["title"],
@@ -180,7 +219,6 @@ def run_normal_cycle(rs: RedditSession):
 
         log(f"  Generated: \"{comment[:100]}...\"")
 
-        # Post it
         success = post_comment(rs, thread["id"], comment)
         if success:
             record_comment(thread["subreddit"], thread["id"], is_promo=is_promo, comment_text=comment)
@@ -203,8 +241,11 @@ def run_dm_followup(rs: RedditSession):
     dms_sent_file = os.path.join(DATA_DIR, "dms_sent.json")
     dms_sent = set()
     if os.path.exists(dms_sent_file):
-        with open(dms_sent_file, "r") as f:
-            dms_sent = set(json.load(f))
+        try:
+            with open(dms_sent_file, "r") as f:
+                dms_sent = set(json.load(f))
+        except Exception:
+            pass
 
     all_target_subs = TIER1_LOCAL + TIER2_VEHICLE + TIER3_COMMERCIAL + INDUSTRY_SUBS
     my_comments = rs.get_my_comments(limit=20)
@@ -260,8 +301,11 @@ def run_thread_creation(rs: RedditSession):
     current_week = datetime.now().strftime("%Y-W%W")
 
     if os.path.exists(weekly_file):
-        with open(weekly_file, "r") as f:
-            weekly_data = json.load(f)
+        try:
+            with open(weekly_file, "r") as f:
+                weekly_data = json.load(f)
+        except Exception:
+            pass
 
     if weekly_data.get("week") == current_week and weekly_data.get("count", 0) >= THREADS_PER_WEEK:
         log(f"Already created {THREADS_PER_WEEK} thread(s) this week. Skipping.")
@@ -318,7 +362,7 @@ def run_scan_only():
         else:
             sample_comment = "(would skip)"
 
-        print(f"\n{'─'*60}")
+        print(f"\n{'='*60}")
         print(f"  #{i} | Score: {thread.get('opportunity_score', 0)}")
         print(f"  Sub: r/{thread['subreddit']}")
         print(f"  Title: {thread['title'][:70]}")
@@ -333,7 +377,7 @@ def run_scan_only():
 def main():
     """Main entry point."""
     print(f"\n{'='*60}")
-    print(f"  CHICAGO FLEET WRAPS — REDDIT BOT")
+    print(f"  CHICAGO FLEET WRAPS -- REDDIT BOT v2.0")
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*60}\n")
 
@@ -347,7 +391,6 @@ def main():
         print(get_daily_summary())
         return
 
-    # All other modes need authentication
     rs = get_reddit_session()
     karma = rs.get_karma()
     log(f"Current karma: {karma}")
@@ -359,16 +402,13 @@ def main():
     elif mode == "dm-check":
         run_dm_followup(rs)
     elif mode == "auto":
-        # Auto mode: determine what to do based on karma
         if karma < WARMING_KARMA_THRESHOLD:
-            log(f"Karma ({karma}) below {WARMING_KARMA_THRESHOLD} — running warming cycle")
+            log(f"Karma ({karma}) below {WARMING_KARMA_THRESHOLD} -- running ACCELERATED warming cycle")
             run_warming_cycle(rs)
         else:
-            log(f"Karma ({karma}) sufficient — running normal cycle")
+            log(f"Karma ({karma}) sufficient -- running normal cycle")
             run_normal_cycle(rs)
             run_dm_followup(rs)
-
-            # Maybe create a thread (~15% chance each run ≈ 1/week at 2hr intervals)
             if random.random() < 0.15:
                 run_thread_creation(rs)
     else:

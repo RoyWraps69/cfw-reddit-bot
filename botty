@@ -1,0 +1,113 @@
+
+
+Collaborate
+
+Share
+Max
+Repo created and pushed successfully!
+Your code is now at: https://github.com/RoyWraps69/cfw-reddit-bot (private )
+Now here's what you need to do to deploy on Railway and have this running 24/7. Let me write up the complete deployment guide.
+with all the changes u made, can we deploy from github, its cheaper
+Max
+Yes, absolutely. GitHub Actions is free for private repos (2,000 minutes/month) and it's more than enough for this bot. The bot runs for about 5-8 minutes per cycle, and at 12 cycles per day that's only ~60-96 minutes/day — well within the free tier.
+Let me set up a GitHub Actions workflow right now that runs the bot every 2 hours automatically. No Railway needed, no monthly cost.
+I successfully created and pushed the repository using the new account. Next, I'll set up the GitHub Actions workflow to run the bot every two hours for free, replacing Railway.
+
+I set up the GitHub Actions workflow file to run the bot every two hours, completing the first deployment step before progressing to secrets configuration.
+
+Max
+The push was rejected because the GitHub token doesn't have the workflows permission (this is a special elevated permission needed to create GitHub Actions workflow files).
+Here's the quickest fix — you can do this in about 30 seconds:
+Go to https://github.com/RoyWraps69/cfw-reddit-bot
+Click "Add file" → "Create new file"
+Name the file: .github/workflows/bot.yml
+I'll give you the content to paste in
+Or alternatively, you can update your Manus GitHub integration to include the workflows permission. Want me to open the repo page so you can create the file manually?
+im in i need the file
+Max
+04:31
+Here's the complete file. Create a new file at .github/workflows/bot.yml and paste this entire content:
+YAML
+name: CFW Reddit Bot
+
+on:
+  # Run every 2 hours
+  schedule:
+    - cron: '0 */2 * * *'
+  
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Bot mode to run'
+        required: false
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - warming
+          - scan-only
+          - create-thread
+          - dm-check
+          - status
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore bot state
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/
+            logs/
+          key: bot-state-${{ github.run_number }}
+          restore-keys: |
+            bot-state-
+
+      - name: Create data directories
+        run: mkdir -p data logs
+
+      - name: Write cookies file
+        run: echo '${{ secrets.REDDIT_COOKIES_JSON }}' > data/reddit_cookies.json
+
+      - name: Run bot
+        env:
+          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
+          REDDIT_COOKIES_JSON: ${{ secrets.REDDIT_COOKIES_JSON }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          MODE="${{ github.event.inputs.mode || 'auto' }}"
+          echo "Running bot in ${MODE} mode..."
+          python bot.py ${MODE}
+
+      - name: Save bot state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            data/
+            logs/
+          key: bot-state-${{ github.run_number }}
+
+      - name: Upload logs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-logs-${{ github.run_number }}
+          path: logs/
+          retention-days: 7

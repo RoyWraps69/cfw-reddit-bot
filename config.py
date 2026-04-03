@@ -15,7 +15,6 @@ OPENAI_MODEL = "gpt-4.1-mini"
 # Reddit Account
 # ─────────────────────────────────────────────
 REDDIT_USERNAME = os.environ.get("REDDIT_USERNAME", "AddressRadiant8768")
-REDDIT_PASSWORD = os.environ.get("REDDIT_PASSWORD", "")
 
 # ─────────────────────────────────────────────
 # Anti-Ban Operational Parameters

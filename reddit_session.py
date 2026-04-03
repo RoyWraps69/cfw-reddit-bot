@@ -18,9 +18,8 @@ class RedditSession:
     BASE_URL = "https://www.reddit.com"
     OAUTH_URL = "https://oauth.reddit.com"
 
-    def __init__(self, username: str, password: str = ""):
+    def __init__(self, username: str):
         self.username = username
-        self.password = password
         self.session = requests.Session()
         self.session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

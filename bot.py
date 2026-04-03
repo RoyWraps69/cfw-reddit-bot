@@ -53,15 +53,10 @@ def log(msg: str):
 
 
 def get_reddit_session() -> RedditSession:
-    """Create and authenticate a Reddit session."""
-    password = os.environ.get("REDDIT_PASSWORD", "")
-    if not password:
-        log("ERROR: REDDIT_PASSWORD environment variable not set!")
-        sys.exit(1)
-
-    session = RedditSession(REDDIT_USERNAME, password)
+    """Create and authenticate a Reddit session using cookies."""
+    session = RedditSession(REDDIT_USERNAME)
     if not session.login():
-        log("ERROR: Failed to log in to Reddit!")
+        log("ERROR: Failed to log in to Reddit! Check your cookies.")
         sys.exit(1)
 
     return session

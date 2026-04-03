@@ -1,0 +1,31 @@
+{
+  "facebook": {
+    "posts_per_day": 4,
+    "slots": [
+      {"hour": 7, "minute": 30, "label": "Early Morning Commute"},
+      {"hour": 11, "minute": 15, "label": "Late Morning Break"},
+      {"hour": 15, "minute": 0, "label": "Afternoon Decision Time"},
+      {"hour": 19, "minute": 30, "label": "Evening Wind-Down"}
+    ]
+  },
+  "instagram": {
+    "posts_per_day": 12,
+    "slots": [
+      {"hour": 6, "minute": 0, "label": "Early Bird"},
+      {"hour": 7, "minute": 45, "label": "Morning Commute"},
+      {"hour": 9, "minute": 15, "label": "Work Start Scroll"},
+      {"hour": 10, "minute": 30, "label": "Mid-Morning"},
+      {"hour": 12, "minute": 0, "label": "Lunch Break"},
+      {"hour": 13, "minute": 30, "label": "Post-Lunch"},
+      {"hour": 15, "minute": 15, "label": "Afternoon Slump"},
+      {"hour": 16, "minute": 45, "label": "End of Workday"},
+      {"hour": 18, "minute": 0, "label": "Evening Commute"},
+      {"hour": 19, "minute": 30, "label": "Dinner Scroll"},
+      {"hour": 21, "minute": 0, "label": "Prime Time"},
+      {"hour": 22, "minute": 30, "label": "Late Night"}
+    ]
+  },
+  "optimization_count": 0,
+  "last_optimized": null,
+  "strategy_notes": "Initial schedule based on general social media best practices. Will be optimized based on engagement data over time."
+}

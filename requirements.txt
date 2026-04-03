@@ -1,4 +1,38 @@
-requests>=2.31.0
-openai>=1.0.0
+# Chicago Fleet Wraps Bot — Complete Requirements
+# Install: pip install -r requirements.txt
+
+# ── Core AI ──────────────────────────────────────────────────
+openai>=1.30.0
+
+# ── Reddit ───────────────────────────────────────────────────
+praw>=7.7.0
 playwright>=1.40.0
-Pillow>=10.0.0
+requests>=2.31.0
+
+# ── Web / API Server (calculator webhook) ────────────────────
+flask>=3.0.0
+flask-cors>=4.0.0
+gunicorn>=21.0.0
+
+# ── SMS / Notifications ──────────────────────────────────────
+twilio>=8.5.0
+
+# ── Database / Storage ───────────────────────────────────────
+# (using JSON files — no external DB required)
+
+# ── Scheduling ───────────────────────────────────────────────
+schedule>=1.2.0
+
+# ── Utilities ────────────────────────────────────────────────
+python-dotenv>=1.0.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+fake-useragent>=1.4.0
+retrying>=1.3.3
+
+# ── Browser automation (for session-based Reddit login) ──────
+selenium>=4.15.0
+webdriver-manager>=4.0.0
+
+# ── Data processing ──────────────────────────────────────────
+python-dateutil>=2.8.2

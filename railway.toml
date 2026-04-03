@@ -1,8 +1,10 @@
 [build]
-builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+builder = "nixpacks"
 
 [deploy]
-startCommand = "python scheduler.py"
-restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 5
+startCommand = "python master_runner.py run"
+restartPolicyType = "always"
+restartPolicyMaxRetries = 10
+
+[environments.production]
+NODE_ENV = "production"

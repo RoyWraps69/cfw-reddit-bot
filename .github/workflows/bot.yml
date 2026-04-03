@@ -1,7 +1,7 @@
-name: CFW Reddit Bot
+name: CFW Social Media Engine
 
 on:
-  # Run every hour for faster warming; will self-regulate via daily limits
+  # Run every hour — full cycle across all platforms
   schedule:
     - cron: '0 * * * *'
   
@@ -9,22 +9,32 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: 'Bot mode to run'
+        description: 'Engine mode to run'
         required: false
-        default: 'auto'
+        default: 'full'
         type: choice
         options:
-          - auto
+          - full
+          - reddit
+          - social
+          - content
+          - engage
+          - analyze
+          - damage
+          - dashboard
           - warming
           - scan-only
           - create-thread
           - dm-check
+          - replies
+          - track
+          - damage-check
           - status
 
 jobs:
-  run-bot:
+  run-engine:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout code
@@ -39,23 +49,50 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          python -m playwright install chromium
+          python -m playwright install-deps
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Restore bot state
         uses: actions/cache/restore@v4
         with:
           path: |
             data/
             logs/
-          key: bot-state-${{ github.run_number }}
+          key: engine-state-${{ github.run_number }}
           restore-keys: |
-            bot-state-
+            engine-state-
 
       - name: Create data directories
-        run: mkdir -p data logs
+        run: mkdir -p data logs data/generated_media
 
-      - name: Write cookies file
+      - name: Write Reddit cookies
         run: echo '${{ secrets.REDDIT_COOKIES_JSON }}' > data/reddit_cookies.json
 
-      - name: Run bot
+      - name: Write Facebook auth
+        if: env.FACEBOOK_AUTH_JSON != ''
+        env:
+          FACEBOOK_AUTH_JSON: ${{ secrets.FACEBOOK_AUTH_JSON }}
+        run: echo "${FACEBOOK_AUTH_JSON}" > data/facebook_auth.json
+
+      - name: Write Instagram auth
+        if: env.INSTAGRAM_AUTH_JSON != ''
+        env:
+          INSTAGRAM_AUTH_JSON: ${{ secrets.INSTAGRAM_AUTH_JSON }}
+        run: echo "${INSTAGRAM_AUTH_JSON}" > data/instagram_auth.json
+
+      - name: Write TikTok auth
+        if: env.TIKTOK_AUTH_JSON != ''
+        env:
+          TIKTOK_AUTH_JSON: ${{ secrets.TIKTOK_AUTH_JSON }}
+        run: echo "${TIKTOK_AUTH_JSON}" > data/tiktok_auth.json
+
+      - name: Run engine
         env:
           REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
           REDDIT_COOKIES_JSON: ${{ secrets.REDDIT_COOKIES_JSON }}
@@ -63,23 +100,60 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           PYTHONUNBUFFERED: '1'
         run: |
-          MODE="${{ github.event.inputs.mode || 'auto' }}"
-          echo "Running bot in ${MODE} mode..."
-          python bot.py ${MODE}
+          MODE="${{ github.event.inputs.mode || 'full' }}"
+          echo "============================================"
+          echo "  CFW Social Media Engine"
+          echo "  Mode: ${MODE}"
+          echo "  Time: $(date)"
+          echo "============================================"
+          
+          # Route to the right entry point
+          case ${MODE} in
+            full|social|content|engage|analyze|damage|dashboard)
+              echo "Running master orchestrator in ${MODE} mode..."
+              python master.py ${MODE}
+              ;;
+            reddit|warming|scan-only|create-thread|dm-check|replies|track|damage-check|status|auto)
+              echo "Running Reddit bot in ${MODE} mode..."
+              python bot.py ${MODE}
+              ;;
+            *)
+              echo "Unknown mode: ${MODE}"
+              exit 1
+              ;;
+          esac
 
-      - name: Save bot state
+      - name: Save engine state
         if: always()
         uses: actions/cache/save@v4
         with:
           path: |
             data/
             logs/
-          key: bot-state-${{ github.run_number }}
+          key: engine-state-${{ github.run_number }}
 
       - name: Upload logs as artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bot-logs-${{ github.run_number }}
+          name: engine-logs-${{ github.run_number }}
           path: logs/
           retention-days: 7
+
+      - name: Upload dashboard as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-${{ github.run_number }}
+          path: logs/unified_dashboard.html
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Upload generated media as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-media-${{ github.run_number }}
+          path: data/generated_media/
+          retention-days: 7
+          if-no-files-found: ignore

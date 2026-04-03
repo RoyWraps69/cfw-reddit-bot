@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 """
-Chicago Fleet Wraps Reddit Bot v3.0 -- Main Orchestrator
-NEW: Context-first pipeline. Before responding, the bot:
-  1. Fetches the thread's top-voted comments
-  2. Analyzes what style/tone earns karma
-  3. Passes that context to the AI so it mirrors winning patterns
-  4. Ensures accuracy and relevance before posting
+Chicago Fleet Wraps Reddit Bot v5.0 -- FULL INTELLIGENCE SUITE
+All 6 upgrades integrated:
+  1. Upvote tracking — checks comment performance, feeds data back to AI
+  2. Subreddit personality profiles — per-sub style learning
+  3. Reply-to-replies — detects and responds to replies on our comments
+  4. Strategic timing — filters threads to the 1-3 hour sweet spot
+  5. Competitor monitoring — detects competitor mentions, responds strategically
+  6. Cross-platform intelligence — learns from FB/IG/TT performance
+  + Damage control — auto-deletes posts with 3+ negative reactions
 
 Usage:
-  python bot.py                  # Full auto run
+  python bot.py                  # Full auto run (all features)
   python bot.py warming          # Account warming mode
   python bot.py scan-only        # Scan only, no posting (dry run)
   python bot.py dm-check         # Check for DM follow-up opportunities
   python bot.py create-thread    # Create a proactive thread
+  python bot.py reply-check      # Check and reply to replies
+  python bot.py upvote-check     # Check comment performance
+  python bot.py damage-check     # Check for negative posts
   python bot.py status           # Show daily activity summary
 """
 import sys
@@ -51,15 +57,25 @@ from tracker import (
     get_daily_summary,
 )
 
+# ── NEW v5.0 MODULES ──
+from upvote_tracker import check_comment_performance, get_performance_context_for_ai
+from sub_profiles import update_profile, get_profile_for_ai
+from reply_engine import run_reply_cycle
+from timing import filter_by_timing, should_skip_cycle, get_timing_report
+from competitor_monitor import (
+    scan_for_competitor_mentions, should_respond_to_competitor,
+    get_competitor_response_strategy, log_competitor_mention,
+)
+from damage_control import register_post, run_damage_check, get_posts_needing_replacement, mark_replacement_done
+from cross_platform_intel import get_cross_intel
+
 
 def log(msg: str):
-    """Print a timestamped log message with flush for GitHub Actions."""
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"  [{ts}] {msg}", flush=True)
 
 
 def random_delay(min_s: int = None, max_s: int = None):
-    """Wait a random amount of time between actions to appear human."""
     min_s = min_s or MIN_DELAY_BETWEEN_COMMENTS
     max_s = max_s or MAX_DELAY_BETWEEN_COMMENTS
     delay = random.randint(min_s, max_s)
@@ -68,7 +84,6 @@ def random_delay(min_s: int = None, max_s: int = None):
 
 
 def get_reddit_session() -> RedditSession:
-    """Create and authenticate a Reddit session using cookies."""
     session = RedditSession(REDDIT_USERNAME)
     if not session.login():
         log("ERROR: Failed to log in to Reddit! Check your cookies.")
@@ -76,18 +91,15 @@ def get_reddit_session() -> RedditSession:
     return session
 
 
-def run_warming_cycle(rs: RedditSession):
-    """Run account warming with FULL CONTEXT AWARENESS.
+# ─────────────────────────────────────────
+# WARMING CYCLE v5.0
+# ─────────────────────────────────────────
 
-    v3.0: Before posting any comment, the bot now:
-    1. Fetches the thread's top-voted comments
-    2. Analyzes what style/tone is getting upvoted
-    3. Passes that context to the AI responder
-    4. AI mirrors the winning style for maximum karma potential
-    """
-    log("=" * 50)
-    log("WARMING CYCLE v3.0 (context-aware)")
-    log("=" * 50)
+def run_warming_cycle(rs: RedditSession):
+    """Warming cycle with ALL intelligence features."""
+    log("=" * 60)
+    log("WARMING CYCLE v5.0 (full intelligence suite)")
+    log("=" * 60)
 
     karma = rs.get_karma()
     log(f"Current karma: {karma} (threshold: {WARMING_KARMA_THRESHOLD})")
@@ -95,6 +107,11 @@ def run_warming_cycle(rs: RedditSession):
     if karma >= WARMING_KARMA_THRESHOLD:
         log(f"Karma threshold reached! Switching to normal mode.")
         return run_normal_cycle(rs)
+
+    # v5.0: Check if this is a dead hour
+    if should_skip_cycle():
+        log("Dead hour detected (2-4 AM). Skipping cycle.")
+        return
 
     # Check daily warming limit
     daily_log_path = os.path.join(LOG_DIR, "daily_activity.json")
@@ -114,7 +131,15 @@ def run_warming_cycle(rs: RedditSession):
         return
 
     comments_to_post = min(WARMING_COMMENTS_PER_CYCLE, remaining)
-    log(f"Target: {comments_to_post} warming comments this cycle ({today_comments} posted today)")
+    log(f"Target: {comments_to_post} warming comments ({today_comments} posted today)")
+
+    # v5.0: Get cross-platform intel for smarter topic selection
+    cross_intel = get_cross_intel()
+    reddit_recs = cross_intel.get_platform_recommendations("reddit")
+    if reddit_recs.get("amplify_topics"):
+        log(f"Cross-platform amplify: {[a['topic'] for a in reddit_recs['amplify_topics'][:3]]}")
+    if reddit_recs.get("suppress_topics"):
+        log(f"Cross-platform suppress: {[s['topic'] for s in reddit_recs['suppress_topics'][:3]]}")
 
     log("Scanning for warming opportunities...")
     opportunities = find_opportunities(mode="warming")
@@ -122,7 +147,18 @@ def run_warming_cycle(rs: RedditSession):
         log("No warming opportunities found this cycle.")
         return
 
-    log(f"Found {len(opportunities)} warming opportunities. Starting context-aware posting...")
+    # v5.0: Apply strategic timing filter
+    opportunities = filter_by_timing(opportunities)
+    log(f"After timing filter: {len(opportunities)} opportunities")
+    log(get_timing_report(opportunities[:10]))
+
+    # v5.0: Scan for competitor mentions
+    scan_for_competitor_mentions(opportunities)
+    competitor_threads = [t for t in opportunities if t.get("competitor_mentioned")]
+    if competitor_threads:
+        log(f"Found {len(competitor_threads)} competitor mention threads!")
+
+    log(f"Starting context-aware posting...")
 
     comments_posted = 0
     subs_used = set()
@@ -134,7 +170,6 @@ def run_warming_cycle(rs: RedditSession):
         sub = thread["subreddit"]
         if sub in subs_used:
             continue
-
         if not can_comment_in_sub(sub):
             log(f"  Skipping r/{sub} (already commented today)")
             continue
@@ -144,36 +179,69 @@ def run_warming_cycle(rs: RedditSession):
         log(f"  Sub: r/{sub}")
         log(f"  Title: {thread['title'][:70]}...")
         log(f"  Score: {thread.get('score', 0)} | Comments: {thread['num_comments']}")
+        if thread.get("timing_score"):
+            log(f"  Timing score: {thread['timing_score']:.0f}")
+        if thread.get("competitor_mentioned"):
+            log(f"  COMPETITOR DETECTED: {thread['competitor_mentioned']}")
 
         try:
-            # v3.0: FETCH THREAD CONTEXT before generating response
-            log(f"  Fetching thread context (top comments, vibe analysis)...")
+            # Fetch thread context
+            log(f"  Fetching thread context...")
             thread_context = fetch_thread_context(thread["url"])
-            time.sleep(1)  # rate limit
+            time.sleep(1)
 
             vibe = thread_context.get("thread_vibe", "unknown")
             avg_len = thread_context.get("avg_comment_length", 0)
             style = thread_context.get("top_comment_style", "no data")
             top_count = len(thread_context.get("top_comments", []))
 
-            log(f"  Context: vibe={vibe}, avg_comment_len={avg_len}w, top_comments={top_count}")
-            log(f"  Style: {style[:80]}")
+            log(f"  Context: vibe={vibe}, avg_len={avg_len}w, top_comments={top_count}")
 
-            # Check if we already commented (using context data)
+            # v5.0: Update subreddit profile with this thread's data
+            update_profile(sub, thread_context)
+
+            # v5.0: Get sub-specific profile for AI
+            sub_profile = get_profile_for_ai(sub)
+            if sub_profile:
+                log(f"  Sub profile loaded ({sub})")
+
+            # v5.0: Get performance context for AI
+            perf_context = get_performance_context_for_ai(sub)
+            if perf_context:
+                log(f"  Performance data loaded")
+
+            # Check if we already commented
             our_username = REDDIT_USERNAME.lower()
+            already_commented = False
             for c in thread_context.get("top_comments", []):
                 if c.get("author", "").lower() == our_username:
-                    log(f"  Already commented in this thread, skipping.")
-                    save_posted_thread(thread["id"])
-                    continue
+                    already_commented = True
+                    break
+            if already_commented:
+                log(f"  Already commented, skipping.")
+                save_posted_thread(thread["id"])
+                continue
 
-            log(f"  Generating context-aware warming comment...")
+            # v5.0: Handle competitor threads differently
+            if thread.get("competitor_mentioned") and should_respond_to_competitor(thread):
+                strategy = get_competitor_response_strategy(thread)
+                log(f"  Competitor strategy: {strategy.get('approach', 'unknown')}")
+
+                # Inject competitor strategy into thread_context for AI
+                thread_context["competitor_strategy"] = strategy
+                thread_context["is_competitor_thread"] = True
+
+            # Generate comment with ALL intelligence
+            log(f"  Generating intelligent warming comment...")
             comment = generate_warming_comment(
                 thread["title"], thread["body"], sub,
-                thread_context=thread_context
+                thread_context=thread_context,
+                sub_profile=sub_profile,
+                performance_context=perf_context,
             )
             log(f"  Generated ({len(comment)} chars): \"{comment[:120]}\"")
 
+            # Post it
             log(f"  Posting to r/{sub}...")
             success = post_comment(rs, thread["id"], comment)
             if success:
@@ -182,40 +250,82 @@ def run_warming_cycle(rs: RedditSession):
                 comments_posted += 1
                 subs_used.add(sub)
                 log(f"  POSTED! ({comments_posted}/{comments_to_post})")
+
+                # v5.0: Register for damage control monitoring
+                register_post("reddit", thread["id"], comment,
+                              topic=thread["title"][:100], url=thread.get("url", ""))
+
+                # v5.0: Log competitor mention if applicable
+                if thread.get("competitor_mentioned"):
+                    log_competitor_mention(thread, responded=True)
+
+                # v5.0: Feed to cross-platform intel
+                cross_intel.ingest_performance("reddit", {
+                    "topic": thread["title"][:50],
+                    "audience": sub,
+                    "content_type": "comment",
+                    "engagement_score": 0,  # Will be updated by upvote tracker
+                    "likes": 0,
+                    "comments": 0,
+                    "shares": 0,
+                })
             else:
                 log("  Failed to post. Moving on.")
+
         except Exception as e:
             log(f"  Error: {e}")
 
-        # Human-like delay between comments
         if comments_posted < comments_to_post:
             delay = random.randint(45, 120)
             log(f"  Waiting {delay}s before next comment...")
             time.sleep(delay)
 
     log(f"")
-    log(f"=" * 50)
+    log(f"=" * 60)
     log(f"WARMING CYCLE COMPLETE")
     log(f"  Comments posted: {comments_posted}/{comments_to_post}")
     log(f"  Subreddits used: {', '.join(subs_used) if subs_used else 'none'}")
-    log(f"=" * 50)
+    log(f"=" * 60)
     print(get_daily_summary(), flush=True)
 
 
+# ─────────────────────────────────────────
+# NORMAL CYCLE v5.0
+# ─────────────────────────────────────────
+
 def run_normal_cycle(rs: RedditSession):
-    """Run one normal cycle with FULL CONTEXT AWARENESS."""
-    log("Starting NORMAL cycle v3.0 (context-aware)...")
+    """Normal cycle with ALL intelligence features."""
+    log("Starting NORMAL cycle v5.0 (full intelligence suite)...")
     seasonal = get_seasonal_config()
     log(f"Season: {seasonal['note']}")
+
+    if should_skip_cycle():
+        log("Dead hour detected. Skipping cycle.")
+        return
 
     if not can_comment():
         log("Daily comment limit reached. Stopping.")
         return
 
+    cross_intel = get_cross_intel()
+
     opportunities = find_opportunities(mode="normal")
     if not opportunities:
         log("No opportunities found this cycle.")
         return
+
+    # Apply timing filter
+    opportunities = filter_by_timing(opportunities)
+    log(f"After timing filter: {len(opportunities)} opportunities")
+
+    # Scan for competitor mentions
+    scan_for_competitor_mentions(opportunities)
+    competitor_threads = [t for t in opportunities if t.get("competitor_mentioned")]
+    if competitor_threads:
+        log(f"Found {len(competitor_threads)} competitor mention threads — prioritizing!")
+        # Move competitor threads to the front
+        non_competitor = [t for t in opportunities if not t.get("competitor_mentioned")]
+        opportunities = competitor_threads + non_competitor
 
     comments_posted = 0
 
@@ -224,14 +334,15 @@ def run_normal_cycle(rs: RedditSession):
             log("Daily limit reached mid-cycle. Stopping.")
             break
         if not can_comment_in_sub(thread["subreddit"]):
-            log(f"Already commented in r/{thread['subreddit']} today. Skipping.")
             continue
 
-        log(f"Classifying: r/{thread['subreddit']} -- {thread['title'][:60]}...")
+        sub = thread["subreddit"]
+        log(f"Classifying: r/{sub} -- {thread['title'][:60]}...")
+
         classification = classify_thread(
             title=thread["title"],
             body=thread["body"],
-            subreddit=thread["subreddit"],
+            subreddit=sub,
         )
 
         category = classification.get("category", "irrelevant")
@@ -244,32 +355,38 @@ def run_normal_cycle(rs: RedditSession):
             log("  Skipping (irrelevant or low confidence)")
             continue
 
-        # v3.0: Fetch thread context BEFORE generating response
-        log(f"  Fetching thread context...")
+        # Fetch context
         thread_context = fetch_thread_context(thread["url"])
         time.sleep(1)
 
         vibe = thread_context.get("thread_vibe", "unknown")
-        style = thread_context.get("top_comment_style", "no data")
-        log(f"  Context: vibe={vibe}, style={style[:60]}")
+        log(f"  Context: vibe={vibe}")
 
-        # Check if we already commented
+        # Update sub profile
+        update_profile(sub, thread_context)
+
+        # Check if already commented
         our_username = REDDIT_USERNAME.lower()
         already_commented = False
         for c in thread_context.get("top_comments", []):
             if c.get("author", "").lower() == our_username:
                 already_commented = True
                 break
-        # Also check all comment texts
         for ct in thread_context.get("all_comment_texts", []):
             if our_username in ct.lower():
                 already_commented = True
                 break
-
         if already_commented:
-            log("  Already commented in this thread, skipping.")
+            log("  Already commented, skipping.")
             save_posted_thread(thread["id"])
             continue
+
+        # Competitor strategy
+        if thread.get("competitor_mentioned") and should_respond_to_competitor(thread):
+            strategy = get_competitor_response_strategy(thread)
+            thread_context["competitor_strategy"] = strategy
+            thread_context["is_competitor_thread"] = True
+            log(f"  Competitor strategy: {strategy.get('approach', 'unknown')}")
 
         is_promo = ai_says_mention and should_be_promo()
         if category in ("direct_recommendation", "competitor_mention") and ai_says_mention:
@@ -277,25 +394,52 @@ def run_normal_cycle(rs: RedditSession):
 
         existing_comments = [c["body"] for c in thread_context.get("top_comments", [])[:5]]
 
-        log(f"  Generating {'PROMO' if is_promo else 'VALUE'} comment (context-aware)...")
+        # Get intelligence layers
+        sub_profile = get_profile_for_ai(sub)
+        perf_context = get_performance_context_for_ai(sub)
+
+        # Cross-platform check
+        override = cross_intel.get_strategy_override("reddit", thread["title"][:50])
+        if override.get("action") == "suppress":
+            log(f"  Cross-platform SUPPRESS: {override.get('reason')}")
+            continue
+        elif override.get("action") == "amplify":
+            log(f"  Cross-platform AMPLIFY: {override.get('reason')}")
+
         comment = generate_comment(
             title=thread["title"],
             body=thread["body"],
-            subreddit=thread["subreddit"],
+            subreddit=sub,
             category=category,
             should_mention_cfw=is_promo,
             existing_comments=existing_comments,
             thread_context=thread_context,
+            sub_profile=sub_profile,
+            performance_context=perf_context,
         )
 
         log(f"  Generated: \"{comment[:120]}\"")
 
         success = post_comment(rs, thread["id"], comment)
         if success:
-            record_comment(thread["subreddit"], thread["id"], is_promo=is_promo, comment_text=comment)
+            record_comment(sub, thread["id"], is_promo=is_promo, comment_text=comment)
             save_posted_thread(thread["id"])
             comments_posted += 1
             log(f"  Posted! ({comments_posted} today)")
+
+            register_post("reddit", thread["id"], comment,
+                          topic=thread["title"][:100], url=thread.get("url", ""))
+
+            if thread.get("competitor_mentioned"):
+                log_competitor_mention(thread, responded=True)
+
+            cross_intel.ingest_performance("reddit", {
+                "topic": thread["title"][:50],
+                "audience": sub,
+                "content_type": "comment",
+                "engagement_score": 0,
+                "likes": 0, "comments": 0, "shares": 0,
+            })
         else:
             log("  Failed to post.")
 
@@ -305,8 +449,12 @@ def run_normal_cycle(rs: RedditSession):
     print(get_daily_summary(), flush=True)
 
 
+# ─────────────────────────────────────────
+# DM FOLLOW-UP
+# ─────────────────────────────────────────
+
 def run_dm_followup(rs: RedditSession):
-    """Check for positive replies to our comments and send follow-up DMs."""
+    """Check for positive replies and send follow-up DMs."""
     log("Starting DM FOLLOW-UP check...")
 
     dms_sent_file = os.path.join(DATA_DIR, "dms_sent.json")
@@ -356,13 +504,15 @@ def run_dm_followup(rs: RedditSession):
     log(f"DM follow-up complete. Sent {dm_count} DMs.")
 
 
+# ─────────────────────────────────────────
+# THREAD CREATION
+# ─────────────────────────────────────────
+
 def run_thread_creation(rs: RedditSession):
     """Create a proactive thread if karma is high enough."""
     log("Starting THREAD CREATION...")
 
     karma = rs.get_karma()
-    log(f"Current karma: {karma}")
-
     if karma < THREAD_CREATION_KARMA_THRESHOLD:
         log(f"Karma ({karma}) below threshold ({THREAD_CREATION_KARMA_THRESHOLD}). Skipping.")
         return
@@ -400,53 +550,70 @@ def run_thread_creation(rs: RedditSession):
         log("Failed to generate thread content.")
 
 
+# ─────────────────────────────────────────
+# SCAN ONLY (dry run)
+# ─────────────────────────────────────────
+
 def run_scan_only():
-    """Dry run: scan, fetch context, classify, and generate — without posting."""
-    log("Starting SCAN-ONLY v3.0 (with context analysis)...")
+    """Dry run with full intelligence analysis."""
+    log("Starting SCAN-ONLY v5.0 (full intelligence)...")
 
     opportunities = find_opportunities(mode="warming")
     if not opportunities:
         log("No opportunities found.")
         return
 
+    # Apply timing
+    opportunities = filter_by_timing(opportunities)
+
+    # Check competitors
+    scan_for_competitor_mentions(opportunities)
+
     log(f"\nFound {len(opportunities)} opportunities. Analyzing top 5:\n")
 
     for i, thread in enumerate(opportunities[:5], 1):
-        # Fetch thread context
         thread_context = fetch_thread_context(thread["url"])
         time.sleep(1)
 
+        update_profile(thread["subreddit"], thread_context)
+
         vibe = thread_context.get("thread_vibe", "unknown")
         avg_len = thread_context.get("avg_comment_length", 0)
-        style = thread_context.get("top_comment_style", "no data")
         top_comments = thread_context.get("top_comments", [])
+        sub_profile = get_profile_for_ai(thread["subreddit"])
 
-        # Generate sample comment
         sample_comment = generate_warming_comment(
             thread["title"], thread["body"], thread["subreddit"],
-            thread_context=thread_context
+            thread_context=thread_context,
+            sub_profile=sub_profile,
         )
 
         print(f"\n{'='*60}", flush=True)
-        print(f"  #{i} | Score: {thread.get('warming_score', thread.get('opportunity_score', 0)):.0f}", flush=True)
+        print(f"  #{i} | Timing: {thread.get('timing_score', 0):.0f}", flush=True)
         print(f"  Sub: r/{thread['subreddit']}", flush=True)
         print(f"  Title: {thread['title'][:70]}", flush=True)
-        print(f"  Thread vibe: {vibe} | Avg comment length: {avg_len}w", flush=True)
-        print(f"  Top comment style: {style[:70]}", flush=True)
-        print(f"  Top comments in thread: {len(top_comments)}", flush=True)
-        if top_comments:
-            print(f"  Highest-voted: [{top_comments[0]['score']}pts] {top_comments[0]['body'][:80]}...", flush=True)
+        print(f"  Vibe: {vibe} | Avg len: {avg_len}w | Top comments: {len(top_comments)}", flush=True)
+        if thread.get("competitor_mentioned"):
+            print(f"  COMPETITOR: {thread['competitor_mentioned']}", flush=True)
+        if sub_profile:
+            print(f"  Sub profile: loaded", flush=True)
         print(f"  URL: {thread['url']}", flush=True)
-        print(f"  SAMPLE RESPONSE: \"{sample_comment}\"", flush=True)
+        print(f"  SAMPLE: \"{sample_comment}\"", flush=True)
 
     log("Dry run complete.")
 
 
+# ─────────────────────────────────────────
+# MAIN ENTRY POINT
+# ─────────────────────────────────────────
+
 def main():
-    """Main entry point."""
     print(f"\n{'='*60}", flush=True)
-    print(f"  CHICAGO FLEET WRAPS -- REDDIT BOT v3.0", flush=True)
-    print(f"  Context-Aware | Style-Mirroring | Accuracy-First", flush=True)
+    print(f"  CHICAGO FLEET WRAPS -- REDDIT BOT v5.0", flush=True)
+    print(f"  Full Intelligence Suite", flush=True)
+    print(f"  Upvote Tracking | Sub Profiles | Reply Engine", flush=True)
+    print(f"  Strategic Timing | Competitor Monitor | Cross-Platform Intel", flush=True)
+    print(f"  Damage Control | Auto-Delete & Replace", flush=True)
     print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
     print(f"{'='*60}\n", flush=True)
 
@@ -474,19 +641,75 @@ def main():
         run_thread_creation(rs)
     elif mode == "dm-check":
         run_dm_followup(rs)
+    elif mode == "reply-check":
+        log("Running reply-to-replies engine...")
+        run_reply_cycle(rs)
+    elif mode == "upvote-check":
+        log("Running upvote performance tracker...")
+        check_comment_performance(rs)
+    elif mode == "damage-check":
+        log("Running damage control check...")
+        result = run_damage_check(reddit_session=rs)
+        log(f"Damage check: {result}")
+        # Handle replacements
+        replacements = get_posts_needing_replacement()
+        if replacements:
+            log(f"Found {len(replacements)} posts needing replacement")
+            for r in replacements[:2]:
+                log(f"  Replacement needed: {r.get('platform')} - {r.get('topic', '')[:50]}")
+                mark_replacement_done(r.get("post_id", ""))
     elif mode == "auto":
+        # ── FULL AUTO MODE v5.0 ──
+        # Step 1: Check timing
+        if should_skip_cycle():
+            log("Dead hour — running maintenance only (upvote check, damage control)")
+            check_comment_performance(rs)
+            run_damage_check(reddit_session=rs)
+            return
+
+        # Step 2: Run upvote tracking first (feeds data to AI)
+        log("\n--- PHASE 1: Upvote Tracking ---")
+        check_comment_performance(rs)
+
+        # Step 3: Run damage control
+        log("\n--- PHASE 2: Damage Control ---")
+        damage_result = run_damage_check(reddit_session=rs)
+        if damage_result.get("deleted", 0) > 0:
+            log(f"Deleted {damage_result['deleted']} negative posts")
+
+        # Step 4: Run cross-platform analysis
+        log("\n--- PHASE 3: Cross-Platform Analysis ---")
+        cross_intel = get_cross_intel()
+        cross_result = cross_intel.run_cross_analysis()
+        if cross_result:
+            log(f"Cross-platform insights: {len(cross_result.get('insights', []))}")
+
+        # Step 5: Main posting cycle
+        log("\n--- PHASE 4: Main Posting Cycle ---")
         if karma < WARMING_KARMA_THRESHOLD:
-            log(f"Karma ({karma}) below {WARMING_KARMA_THRESHOLD} -- running context-aware warming cycle")
+            log(f"Karma ({karma}) below {WARMING_KARMA_THRESHOLD} -- warming mode")
             run_warming_cycle(rs)
         else:
-            log(f"Karma ({karma}) sufficient -- running normal cycle")
+            log(f"Karma ({karma}) sufficient -- normal mode")
             run_normal_cycle(rs)
-            run_dm_followup(rs)
-            if random.random() < 0.15:
-                run_thread_creation(rs)
+
+        # Step 6: Reply to replies
+        log("\n--- PHASE 5: Reply Engine ---")
+        run_reply_cycle(rs)
+
+        # Step 7: DM follow-up
+        log("\n--- PHASE 6: DM Follow-up ---")
+        run_dm_followup(rs)
+
+        # Step 8: Occasional thread creation
+        if random.random() < 0.15:
+            log("\n--- PHASE 7: Thread Creation ---")
+            run_thread_creation(rs)
+
     else:
         print(f"  Unknown mode: {mode}", flush=True)
-        print("  Available: auto, warming, scan-only, create-thread, dm-check, status", flush=True)
+        print("  Available: auto, warming, scan-only, create-thread, dm-check,", flush=True)
+        print("             reply-check, upvote-check, damage-check, status", flush=True)
 
     print("\n" + get_daily_summary(), flush=True)
 

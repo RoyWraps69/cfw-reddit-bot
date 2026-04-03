@@ -38,11 +38,14 @@ You have real opinions. You've seen things go wrong. You know what works and wha
 # ─────────────────────────────────────────────
 
 def generate_warming_comment(title: str, body: str, subreddit: str,
-                              thread_context: dict = None) -> str:
+                              thread_context: dict = None,
+                              sub_profile: str = None,
+                              performance_context: str = None) -> str:
     """Generate a warming comment that mirrors the thread's winning style.
 
-    v4.0: Now takes thread_context with top-voted comments so the AI can
-    study what's getting upvoted and match that energy.
+    v5.0: Now accepts sub_profile (per-sub personality data) and
+    performance_context (what's worked for our account) in addition
+    to thread_context.
     """
     # Build context block from top comments
     style_guidance = _build_style_guidance(thread_context)
@@ -69,6 +72,10 @@ Thread type: {vibe}
 
 --- YOUR RESPONSE RULES ---
 {length_guidance}
+
+{f'--- SUBREDDIT PERSONALITY ---' + chr(10) + sub_profile if sub_profile else ''}
+{f'--- YOUR PAST PERFORMANCE ---' + chr(10) + performance_context if performance_context else ''}
+{_build_competitor_guidance(thread_context) if thread_context and thread_context.get('is_competitor_thread') else ''}
 
 ACCURACY RULES:
 - Only state things you know to be true. If you're not sure, don't say it.
@@ -274,11 +281,13 @@ PROMO_VOICES = {
 
 def generate_comment(title: str, body: str, subreddit: str, category: str,
                      should_mention_cfw: bool, existing_comments: list = None,
-                     thread_context: dict = None) -> str:
+                     thread_context: dict = None,
+                     sub_profile: str = None,
+                     performance_context: str = None) -> str:
     """Generate a Reddit comment with full context awareness.
 
-    v4.0: Now takes thread_context so it can mirror winning comment styles
-    and ensure accuracy/relevance.
+    v5.0: Now accepts sub_profile and performance_context for
+    per-subreddit style learning and self-improvement.
     """
     style_guidance = _build_style_guidance(thread_context)
     top_comments_block = _build_top_comments_block(thread_context)
@@ -316,6 +325,10 @@ You're answering a question about vehicle wraps. You know this stuff cold — 10
 
 --- STYLE ANALYSIS ---
 {style_guidance}
+
+{f'--- SUBREDDIT PERSONALITY ---' + chr(10) + sub_profile if sub_profile else ''}
+{f'--- YOUR PAST PERFORMANCE ---' + chr(10) + performance_context if performance_context else ''}
+{_build_competitor_guidance(thread_context) if thread_context and thread_context.get('is_competitor_thread') else ''}
 
 RULES:
 - Match the style of the top-voted comments above
@@ -422,6 +435,28 @@ Return ONLY valid JSON:
         return json.loads(result.strip())
     except json.JSONDecodeError:
         return None
+
+
+def _build_competitor_guidance(thread_context: dict) -> str:
+    """Build competitor response guidance if this is a competitor thread."""
+    if not thread_context or not thread_context.get("is_competitor_thread"):
+        return ""
+    strategy = thread_context.get("competitor_strategy", {})
+    guidance = strategy.get("ai_guidance", "")
+    approach = strategy.get("approach", "helpful")
+    tone = strategy.get("tone", "casual")
+    mention = strategy.get("mention_cfw", False)
+    
+    parts = ["--- COMPETITOR THREAD STRATEGY ---"]
+    parts.append(f"Approach: {approach}")
+    parts.append(f"Tone: {tone}")
+    if mention:
+        parts.append("You CAN mention Chicago Fleet Wraps naturally if it fits.")
+    else:
+        parts.append("Do NOT mention any specific shop. Just be helpful.")
+    if guidance:
+        parts.append(f"Strategy: {guidance}")
+    return "\n".join(parts)
 
 
 def check_positive_reply(comment_text: str) -> bool:

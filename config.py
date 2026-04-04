@@ -16,6 +16,12 @@ from datetime import datetime
 # AI APIs
 # ─────────────────────────────────────────────────────────────────────
 
+# ─── GLOBAL KILL SWITCH ───────────────────────────────────────────────
+# Set to False to immediately stop ALL posting across ALL platforms.
+# The bot will still run but will skip every post/comment action.
+POSTING_ENABLED = False
+# ──────────────────────────────────────────────────────────────────────
+
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL = "gpt-4.1-mini"           # Warming/commenting (fast + cheap)
 OPENAI_MODEL_PREMIUM = "gpt-4o"         # Content creation + strategy (smart + creative)

@@ -591,6 +591,15 @@ def run_full_cycle():
 
 
 def main():
+    from config import POSTING_ENABLED
+    if not POSTING_ENABLED:
+        print("\n" + "=" * 60, flush=True)
+        print("  POSTING_ENABLED = False in config.py", flush=True)
+        print("  ALL posting is DISABLED. No actions will be taken.", flush=True)
+        print("  Set POSTING_ENABLED = True to resume.", flush=True)
+        print("=" * 60 + "\n", flush=True)
+        return
+
     mode = sys.argv[1] if len(sys.argv) > 1 else "full"
 
     if mode == "full":

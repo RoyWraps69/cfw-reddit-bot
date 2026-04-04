@@ -608,6 +608,15 @@ def run_scan_only():
 # ─────────────────────────────────────────
 
 def main():
+    from config import POSTING_ENABLED
+    if not POSTING_ENABLED:
+        print("\n" + "=" * 60, flush=True)
+        print("  POSTING_ENABLED = False in config.py", flush=True)
+        print("  ALL posting is DISABLED. No actions will be taken.", flush=True)
+        print("  Set POSTING_ENABLED = True to resume.", flush=True)
+        print("=" * 60 + "\n", flush=True)
+        return
+
     print(f"\n{'='*60}", flush=True)
     print(f"  CHICAGO FLEET WRAPS -- REDDIT BOT v5.0", flush=True)
     print(f"  Full Intelligence Suite", flush=True)

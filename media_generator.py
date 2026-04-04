@@ -1,15 +1,16 @@
 """
-Chicago Fleet Wraps — Media Generator v3.0
-AI IMAGE & VIDEO GENERATION FOR SOCIAL MEDIA
+Chicago Fleet Wraps — Media Generator v4.0
+PRE-GENERATED CDN IMAGE LIBRARY + AI CAPTIONS
 
-v3.0 RULES:
-- EVERY image must be an AI-generated photo of a wrapped vehicle
+v4.0 ARCHITECTURE:
+- Images are PRE-GENERATED externally (via Manus/NanoBanana) and uploaded to CDN
+- This module picks the best image from data/image_library.json based on topic
+- NO runtime DALL-E calls — zero OpenAI image API dependency
 - NO Pillow templates, NO gradient backgrounds, NO text-on-color
-- If DALL-E fails, retry with a simpler prompt
-- If all retries fail, use a curated stock photo URL as last resort
-- Video: ffmpeg slideshow with Ken Burns effect for TikTok
-- Caption adaptation per platform
+- Every image shows an installer wrapping a vehicle inside a shop
+- Caption adaptation per platform via GPT
 - Content uniqueness tracking
+- Least-recently-used rotation so images don't repeat
 
 RULE: Each post is UNIQUE content, but the SAME content gets published
 across all platforms (Facebook, Instagram, TikTok) simultaneously,
@@ -20,23 +21,21 @@ import json
 import time
 import hashlib
 import random
-import requests
+import logging
 from datetime import datetime
 from openai import OpenAI
 from config import DATA_DIR, OPENAI_MODEL, BUSINESS_CONTEXT
+
+log = logging.getLogger("media_generator")
 
 # Chat completions client — uses proxy if configured
 _chat_base_url = os.environ.get("OPENAI_BASE_URL", None)
 client = OpenAI(base_url=_chat_base_url) if _chat_base_url else OpenAI()
 
-# Image generation client — ALWAYS uses the real OpenAI API directly.
-# The proxy/gateway (OPENAI_BASE_URL) does NOT support /v1/images/generations
-# and returns 404. DALL-E must go direct to api.openai.com.
-image_client = OpenAI(base_url="https://api.openai.com/v1")
-
 MEDIA_DIR = os.path.join(DATA_DIR, "generated_media")
 MEDIA_LOG = os.path.join(DATA_DIR, "media_generation_log.json")
 PUBLISHED_HASHES = os.path.join(DATA_DIR, "published_content_hashes.json")
+IMAGE_LIBRARY = os.path.join(DATA_DIR, "image_library.json")
 
 
 def _ensure_dirs():
@@ -66,294 +65,199 @@ def _save_published_hash(content_hash: str):
         json.dump(hashes_list, f)
 
 
-def _content_hash(topic: str, image_prompt: str) -> str:
-    raw = f"{topic.lower().strip()}|{image_prompt.lower().strip()}"
+def _content_hash(topic: str, image_id: str) -> str:
+    raw = f"{topic.lower().strip()}|{image_id.lower().strip()}"
     return hashlib.md5(raw.encode()).hexdigest()
 
 
-def is_content_unique(topic: str, image_prompt: str) -> bool:
-    h = _content_hash(topic, image_prompt)
+def is_content_unique(topic: str, image_id: str) -> bool:
+    h = _content_hash(topic, image_id)
     return h not in _load_published_hashes()
 
 
-def mark_content_published(topic: str, image_prompt: str):
-    h = _content_hash(topic, image_prompt)
+def mark_content_published(topic: str, image_id: str):
+    h = _content_hash(topic, image_id)
     _save_published_hash(h)
 
 
 # ─────────────────────────────────────────────
-# WRAPPED VEHICLE PROMPT BUILDER
+# PRE-GENERATED IMAGE LIBRARY
 # ─────────────────────────────────────────────
 
-# Variety pools for generating diverse wrapped vehicle images
-VEHICLE_TYPES = [
-    "Ford F-150 pickup truck", "Ram 1500 pickup truck", "Chevy Silverado pickup truck",
-    "Mercedes Sprinter van", "Ford Transit cargo van", "Ram ProMaster van",
-    "Tesla Model 3 sedan", "Tesla Model Y SUV", "Rivian R1T pickup truck",
-    "Rivian R1S SUV", "BMW M4 coupe", "Porsche 911", "Dodge Charger",
-    "Ford Mustang", "Chevy Corvette C8", "Lamborghini Huracan",
-    "box truck", "food truck", "Jeep Wrangler", "Toyota Supra",
-    "Audi RS5", "McLaren 720S", "Cadillac Escalade", "GMC Sierra",
-]
-
-WRAP_STYLES = [
-    "matte black vinyl wrap", "satin midnight blue wrap", "gloss racing red wrap",
-    "matte military green wrap", "satin pearl white wrap", "chrome delete black wrap",
-    "carbon fiber accent wrap", "matte charcoal gray wrap", "satin bronze wrap",
-    "gloss electric blue wrap", "matte forest green wrap", "satin lavender purple wrap",
-    "color shift chameleon wrap", "matte khaki tan wrap", "gloss sunset orange wrap",
-    "satin nardo gray wrap", "full commercial fleet graphics wrap",
-    "branded delivery van wrap with company logo graphics",
-    "matte army olive drab wrap", "gloss candy apple red wrap",
-]
-
-SETTINGS = [
-    "parked on a Chicago city street with skyline in background",
-    "in a professional wrap shop with bright lighting",
-    "driving through downtown Chicago at golden hour",
-    "parked in front of a modern commercial building",
-    "on display at a car show under professional lighting",
-    "parked on Michigan Avenue in Chicago",
-    "in a clean garage with LED strip lighting",
-    "on a rooftop parking deck with city skyline behind",
-    "driving on Lake Shore Drive with Lake Michigan visible",
-    "parked outside a trendy restaurant at night with neon reflections",
-]
+def _load_image_library() -> list:
+    """Load the pre-generated image library from JSON."""
+    if os.path.exists(IMAGE_LIBRARY):
+        try:
+            with open(IMAGE_LIBRARY, "r") as f:
+                data = json.load(f)
+                return data.get("images", [])
+        except Exception as e:
+            log.warning(f"Failed to load image library: {e}")
+    return []
 
 
-def _build_vehicle_image_prompt(decision: dict) -> str:
-    """Build a detailed DALL-E prompt that always produces a wrapped vehicle photo.
+def _save_image_library(images: list):
+    """Save updated image library (with usage counts)."""
+    data = {
+        "version": "1.0",
+        "updated_at": datetime.now().isoformat(),
+        "description": "Pre-generated AI images of wrapped vehicles for social media posting.",
+        "images": images,
+    }
+    with open(IMAGE_LIBRARY, "w") as f:
+        json.dump(data, f, indent=2)
 
-    Uses the decision context to make it relevant, but guarantees the output
-    is a photograph of a wrapped vehicle — never text, never a template.
+
+def _score_image_for_topic(image: dict, topic: str, image_prompt: str = "") -> float:
+    """Score how well an image matches a topic. Higher = better match."""
+    score = 0.0
+    topic_lower = (topic + " " + image_prompt).lower()
+    tags = image.get("tags", [])
+    vehicle = image.get("vehicle", "").lower()
+    wrap_style = image.get("wrap_style", "").lower()
+
+    # Tag matches
+    for tag in tags:
+        if tag.lower() in topic_lower:
+            score += 2.0
+
+    # Vehicle match
+    for word in vehicle.split():
+        if word in topic_lower:
+            score += 3.0
+
+    # Wrap style match
+    for word in wrap_style.split():
+        if word in topic_lower:
+            score += 2.5
+
+    # Fleet/commercial topic → prefer van/truck images
+    if any(kw in topic_lower for kw in ["fleet", "commercial", "business", "delivery"]):
+        if any(t in tags for t in ["van", "fleet", "commercial", "truck"]):
+            score += 5.0
+
+    # Sports car topic → prefer sports car images
+    if any(kw in topic_lower for kw in ["sports", "exotic", "luxury", "color change", "chameleon"]):
+        if any(t in tags for t in ["sports car", "exotic", "chameleon"]):
+            score += 5.0
+
+    # Penalize heavily-used images (least-recently-used rotation)
+    used_count = image.get("used_count", 0)
+    score -= used_count * 3.0
+
+    return score
+
+
+def pick_image(decision: dict) -> dict:
+    """Pick the best image from the library for a given content decision.
+
+    Uses topic matching + least-recently-used rotation to ensure variety.
+    Returns the image dict with 'url' field, or {} if library is empty.
     """
+    images = _load_image_library()
+    if not images:
+        log.warning("Image library is empty! No pre-generated images available.")
+        return {}
+
     topic = decision.get("topic", "")
     image_prompt = decision.get("image_prompt", "")
-    audience = decision.get("audience", "")
 
-    # Pick vehicle, wrap style, and setting — use decision hints if available
-    vehicle = random.choice(VEHICLE_TYPES)
-    wrap = random.choice(WRAP_STYLES)
-    setting = random.choice(SETTINGS)
+    # Score all images
+    scored = []
+    for img in images:
+        s = _score_image_for_topic(img, topic, image_prompt)
+        scored.append((s, img))
 
-    # Try to extract vehicle/wrap hints from the decision
-    topic_lower = (topic + " " + image_prompt).lower()
-    for v in VEHICLE_TYPES:
-        if any(word in topic_lower for word in v.lower().split()[:2]):
-            vehicle = v
-            break
-    for w in WRAP_STYLES:
-        if any(word in topic_lower for word in w.lower().split()[:2]):
-            wrap = w
-            break
+    # Sort by score (highest first), with random tiebreaker
+    scored.sort(key=lambda x: (x[0], random.random()), reverse=True)
 
-    # If the topic mentions fleet/commercial, bias toward commercial vehicles
-    if any(kw in topic_lower for kw in ["fleet", "commercial", "business", "delivery", "van", "truck wrap", "box truck"]):
-        vehicle = random.choice([
-            "Mercedes Sprinter van", "Ford Transit cargo van", "Ram ProMaster van",
-            "box truck", "food truck", "Ford F-150 pickup truck",
-        ])
-        wrap = random.choice([
-            "full commercial fleet graphics wrap",
-            "branded delivery van wrap with company logo graphics",
-            "matte black vinyl wrap", "gloss white wrap with vinyl lettering",
-        ])
+    # Pick the best match
+    best = scored[0][1]
 
-    prompt = (
-        f"Professional automotive photograph of a {vehicle} with a {wrap}, "
-        f"{setting}. The wrap is freshly installed, flawless, with no bubbles "
-        f"or imperfections. Shot with a Canon EOS R5, 85mm lens, shallow depth "
-        f"of field, natural lighting, photorealistic, ultra high resolution, 8K quality. "
-        f"The vehicle is the hero of the image — no people, no text, no logos, "
-        f"no watermarks, no words anywhere in the image."
-    )
+    # Update usage count
+    best["used_count"] = best.get("used_count", 0) + 1
+    best["last_used"] = datetime.now().isoformat()
+    _save_image_library(images)
 
-    return prompt
+    log.info(f"  [MEDIA] Selected image: {best.get('id')} (vehicle={best.get('vehicle')}, wrap={best.get('wrap_style')})")
+    print(f"  [MEDIA] Selected image: {best.get('id')} — {best.get('vehicle')} {best.get('wrap_style')}", flush=True)
 
+    return best
 
-def _build_simple_fallback_prompt() -> str:
-    """Build a simpler prompt for retry attempts."""
-    vehicle = random.choice(VEHICLE_TYPES[:10])  # stick to common vehicles
-    wrap = random.choice(WRAP_STYLES[:10])
-    return (
-        f"Professional photo of a {vehicle} with a {wrap} parked in Chicago. "
-        f"Photorealistic, high quality, no text, no logos, no watermarks, no words."
-    )
-
-
-# ─────────────────────────────────────────────
-# AI IMAGE GENERATION (DALL-E with retries)
-# ─────────────────────────────────────────────
-
-def generate_ai_image(image_prompt: str, retries: int = 3) -> str:
-    """Generate an AI image via DALL-E. Retries with simpler prompts on failure.
-
-    Returns local filepath or empty string.
-    """
-    _ensure_dirs()
-
-    for attempt in range(retries):
-        prompt = image_prompt if attempt == 0 else _build_simple_fallback_prompt()
-        print(f"  [MEDIA] AI image attempt {attempt + 1}/{retries}: {prompt[:100]}...", flush=True)
-
-        try:
-            response = image_client.images.generate(
-                model="dall-e-3",
-                prompt=prompt,
-                size="1024x1024",
-                quality="standard",
-                n=1,
-            )
-
-            image_url = response.data[0].url
-            if not image_url:
-                print(f"  [MEDIA] Attempt {attempt + 1}: no URL returned", flush=True)
-                continue
-
-            timestamp = int(time.time())
-            filepath = os.path.join(MEDIA_DIR, f"cfw_ai_{timestamp}_{attempt}.png")
-
-            img_response = requests.get(image_url, timeout=60)
-            if img_response.status_code == 200:
-                with open(filepath, "wb") as f:
-                    f.write(img_response.content)
-                print(f"  [MEDIA] AI image saved: {filepath}", flush=True)
-                _log_generation("ai_image", prompt[:300], filepath)
-                return filepath
-            else:
-                print(f"  [MEDIA] Attempt {attempt + 1}: download failed ({img_response.status_code})", flush=True)
-
-        except Exception as e:
-            print(f"  [MEDIA] Attempt {attempt + 1} failed: {e}", flush=True)
-            time.sleep(2)
-
-    print("  [MEDIA] All AI image attempts failed", flush=True)
-    return ""
-
-
-# ─────────────────────────────────────────────
-# STOCK PHOTO FALLBACK (last resort)
-# ─────────────────────────────────────────────
-
-def _download_stock_fallback() -> str:
-    """Download a free stock photo of a wrapped/modified vehicle as absolute last resort.
-
-    Uses Unsplash/Pexels free API for a car photo. This is better than
-    posting nothing or posting a text-on-gradient template.
-    """
-    _ensure_dirs()
-    print("  [MEDIA] Trying stock photo fallback...", flush=True)
-
-    # Try Pexels free API (no key needed for basic search)
-    search_terms = [
-        "wrapped car", "vinyl wrap vehicle", "custom car wrap",
-        "matte black car", "vehicle graphics", "fleet vehicle wrap",
-        "car color change", "modified sports car",
-    ]
-    query = random.choice(search_terms)
-
-    try:
-        # Pexels API (free tier)
-        pexels_key = os.environ.get("PEXELS_API_KEY", "")
-        if pexels_key:
-            r = requests.get(
-                "https://api.pexels.com/v1/search",
-                headers={"Authorization": pexels_key},
-                params={"query": query, "per_page": 10, "orientation": "square"},
-                timeout=15,
-            )
-            if r.status_code == 200:
-                photos = r.json().get("photos", [])
-                if photos:
-                    photo = random.choice(photos)
-                    img_url = photo.get("src", {}).get("large2x", photo.get("src", {}).get("large", ""))
-                    if img_url:
-                        img_r = requests.get(img_url, timeout=30)
-                        if img_r.status_code == 200:
-                            filepath = os.path.join(MEDIA_DIR, f"cfw_stock_{int(time.time())}.jpg")
-                            with open(filepath, "wb") as f:
-                                f.write(img_r.content)
-                            print(f"  [MEDIA] Stock photo saved: {filepath}", flush=True)
-                            _log_generation("stock_photo", query, filepath)
-                            return filepath
-    except Exception as e:
-        print(f"  [MEDIA] Stock photo fallback failed: {e}", flush=True)
-
-    return ""
-
-
-# ─────────────────────────────────────────────
-# MAIN IMAGE GENERATION (with fallback chain)
-# ─────────────────────────────────────────────
 
 def generate_image(image_prompt: str = "", style: str = "photorealistic",
                    decision: dict = None) -> str:
-    """Generate an image of a wrapped vehicle.
+    """Get an image URL from the pre-generated library.
 
-    Fallback chain:
-    1. DALL-E with full detailed prompt (3 retries)
-    2. Stock photo of a wrapped/modified car
-    3. Empty string (post will be skipped — never post without an image)
+    This replaces the old DALL-E runtime generation. Now it simply picks
+    the best matching pre-generated image from the CDN library.
 
-    NEVER returns a Pillow template or text-on-gradient image.
+    Returns the CDN URL string, or empty string if library is empty.
     """
-    _ensure_dirs()
-
     if decision is None:
         decision = {}
 
-    # Build a proper wrapped-vehicle prompt
-    if not image_prompt:
-        image_prompt = _build_vehicle_image_prompt(decision)
-    else:
-        # Enhance whatever prompt was provided to ensure it's a vehicle photo
-        if "vehicle" not in image_prompt.lower() and "car" not in image_prompt.lower() and "truck" not in image_prompt.lower() and "van" not in image_prompt.lower():
-            image_prompt = (
-                f"Professional automotive photograph: {image_prompt}. "
-                f"Must show a real wrapped vehicle. Photorealistic, no text, no logos, no watermarks."
-            )
+    if not decision.get("topic") and image_prompt:
+        decision["topic"] = image_prompt
+        decision["image_prompt"] = image_prompt
 
-    # Attempt 1: DALL-E AI generation (with retries)
-    ai_image = generate_ai_image(image_prompt, retries=3)
-    if ai_image:
-        return ai_image
+    img = pick_image(decision)
+    if img and img.get("url"):
+        return img["url"]
 
-    # Attempt 2: Stock photo fallback
-    stock = _download_stock_fallback()
-    if stock:
-        return stock
-
-    # No image available — return empty (caller must NOT post without an image)
-    print("  [MEDIA] CRITICAL: No image could be generated. Post will be skipped.", flush=True)
+    log.error("  [MEDIA] CRITICAL: No images in library. Cannot generate content.")
+    print("  [MEDIA] CRITICAL: Image library is empty. Run content pre-generation first.", flush=True)
     return ""
 
 
 def generate_branded_image(headline: str, subtext: str = "",
                            topic: str = "", style_idx: int = None) -> str:
-    """Generate an AI image of a wrapped vehicle based on headline/topic.
+    """Get a pre-generated image URL based on headline/topic.
 
-    This replaces the old Pillow template function. Now it always generates
-    a real AI photo of a wrapped vehicle — never a text-on-gradient template.
+    This replaces the old Pillow template function. Now it picks from
+    the pre-generated CDN library — never generates at runtime.
     """
     decision = {
         "topic": topic or headline,
         "image_prompt": f"{headline}. {subtext}".strip(),
-        "headline": headline,
-        "subtext": subtext,
     }
     return generate_image(decision=decision)
 
 
 # ─────────────────────────────────────────────
-# VIDEO GENERATION (from image)
+# VIDEO GENERATION (from image URL)
 # ─────────────────────────────────────────────
 
-def create_slideshow_video(image_path: str, caption: str, duration: int = 10) -> str:
-    """Create a simple slideshow video from an image for TikTok."""
+def create_slideshow_video(image_source: str, caption: str, duration: int = 10) -> str:
+    """Create a simple slideshow video from an image for TikTok.
+
+    image_source can be a local path or a CDN URL.
+    """
     _ensure_dirs()
 
-    if not image_path or not os.path.exists(image_path):
+    if not image_source:
         print("  [MEDIA] No image for video creation", flush=True)
+        return ""
+
+    # If it's a URL, download it first
+    local_path = image_source
+    if image_source.startswith("http"):
+        try:
+            import requests
+            r = requests.get(image_source, timeout=30)
+            if r.status_code == 200:
+                local_path = os.path.join(MEDIA_DIR, f"video_src_{int(time.time())}.png")
+                with open(local_path, "wb") as f:
+                    f.write(r.content)
+            else:
+                print(f"  [MEDIA] Failed to download image for video: {r.status_code}", flush=True)
+                return ""
+        except Exception as e:
+            print(f"  [MEDIA] Image download error: {e}", flush=True)
+            return ""
+
+    if not os.path.exists(local_path):
+        print("  [MEDIA] No local image for video creation", flush=True)
         return ""
 
     timestamp = int(time.time())
@@ -365,7 +269,7 @@ def create_slideshow_video(image_path: str, caption: str, duration: int = 10) ->
         cmd = [
             "ffmpeg", "-y",
             "-loop", "1",
-            "-i", image_path,
+            "-i", local_path,
             "-vf", f"zoompan=z='min(zoom+0.001,1.3)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={duration*25}:s=1080x1080:fps=25",
             "-c:v", "libx264",
             "-t", str(duration),
@@ -378,7 +282,7 @@ def create_slideshow_video(image_path: str, caption: str, duration: int = 10) ->
 
         if result.returncode == 0 and os.path.exists(video_path):
             print(f"  [MEDIA] Video created: {video_path}", flush=True)
-            _log_generation("video", f"slideshow from {image_path}", video_path)
+            _log_generation("video", f"slideshow from {image_source}", video_path)
             return video_path
         else:
             print(f"  [MEDIA] ffmpeg error: {result.stderr[:200]}", flush=True)
@@ -403,7 +307,7 @@ def adapt_captions(decision: dict) -> dict:
         prompt = f"""You have ONE piece of content about: {topic}
 
 Original caption: {base_caption}
-Original hashtags: {', '.join(base_hashtags)}
+Original hashtags: {', '.join(base_hashtags) if isinstance(base_hashtags, list) else base_hashtags}
 
 Adapt this caption for THREE platforms. Same content, different voice.
 Return ONLY valid JSON:
@@ -426,6 +330,8 @@ Return ONLY valid JSON:
 RULES:
 - Each platform caption should feel NATIVE to that platform
 - Sound like a real business owner (Roy), not a marketing agency
+- Every caption must end with an engagement question for business owners
+- Geo-target Chicago, IL area
 - No emojis"""
 
         response = client.chat.completions.create(
@@ -446,9 +352,9 @@ RULES:
     except Exception as e:
         print(f"  [MEDIA] Caption adaptation error: {e}", flush=True)
         return {
-            "facebook": {"caption": base_caption, "hashtags": base_hashtags[:5]},
-            "instagram": {"caption": base_caption, "hashtags": base_hashtags},
-            "tiktok": {"caption": base_caption[:150], "hashtags": base_hashtags[:8]},
+            "facebook": {"caption": base_caption, "hashtags": base_hashtags[:5] if isinstance(base_hashtags, list) else []},
+            "instagram": {"caption": base_caption, "hashtags": base_hashtags if isinstance(base_hashtags, list) else []},
+            "tiktok": {"caption": base_caption[:150], "hashtags": base_hashtags[:8] if isinstance(base_hashtags, list) else []},
         }
 
 
@@ -459,43 +365,42 @@ RULES:
 def create_content_package(decision: dict) -> dict:
     """Create a complete content package from a brain decision.
 
-    Generates one unique piece of content and packages it for all platforms.
-    ALWAYS produces an AI image of a wrapped vehicle — never a template.
-    If no image can be generated, returns {"unique": False} to skip this post.
+    Picks a pre-generated image from the CDN library and generates
+    platform-adapted captions. No runtime image generation needed.
+    If no image is available, returns {"unique": False} to skip.
     """
     _ensure_dirs()
 
     topic = decision.get("topic", "vehicle wrap")
     image_prompt = decision.get("image_prompt", "")
 
-    # Check uniqueness
-    if not is_content_unique(topic, image_prompt):
-        print(f"  [MEDIA] Content already published, requesting new decision", flush=True)
+    # Pick an image from the pre-generated library
+    image = pick_image(decision)
+    if not image or not image.get("url"):
+        print(f"  [MEDIA] SKIPPING: No images available in library for '{topic}'", flush=True)
+        return {"unique": False}
+
+    image_url = image["url"]
+    image_id = image.get("id", image_url)
+
+    # Check uniqueness (topic + image combination)
+    if not is_content_unique(topic, image_id):
+        print(f"  [MEDIA] Content already published (topic+image combo), requesting new decision", flush=True)
         return {"unique": False}
 
     content_id = f"content_{int(time.time())}"
 
-    # Step 1: Generate the AI image (MUST be a wrapped vehicle photo)
-    image_path = generate_image(image_prompt, decision=decision)
-
-    if not image_path or not os.path.exists(image_path):
-        print(f"  [MEDIA] SKIPPING: Could not generate image for '{topic}'", flush=True)
-        return {"unique": False}
-
-    # Step 2: Create video version for TikTok
-    video_path = ""
-    if image_path:
-        video_path = create_slideshow_video(image_path, decision.get("caption", ""))
-
-    # Step 3: Adapt captions for each platform
+    # Adapt captions for each platform
     platform_content = adapt_captions(decision)
 
-    # Step 4: Mark as published
-    mark_content_published(topic, image_prompt)
+    # Mark as published
+    mark_content_published(topic, image_id)
 
     package = {
-        "image_path": image_path,
-        "video_path": video_path,
+        "image_url": image_url,
+        "image_id": image_id,
+        "image_vehicle": image.get("vehicle", ""),
+        "image_wrap_style": image.get("wrap_style", ""),
         "platforms": platform_content,
         "topic": topic,
         "content_id": content_id,
@@ -504,11 +409,11 @@ def create_content_package(decision: dict) -> dict:
         "generated_at": datetime.now().isoformat(),
     }
 
-    _log_generation("package", json.dumps(decision)[:300], content_id)
+    _log_generation("package", json.dumps({"topic": topic, "image": image_id})[:300], content_id)
 
     print(f"  [MEDIA] Content package ready: {content_id}", flush=True)
-    print(f"  [MEDIA]   Image: {image_path}", flush=True)
-    print(f"  [MEDIA]   Video: {'YES' if video_path else 'NO'}", flush=True)
+    print(f"  [MEDIA]   Image: {image_url[:80]}...", flush=True)
+    print(f"  [MEDIA]   Vehicle: {image.get('vehicle')} — {image.get('wrap_style')}", flush=True)
 
     return package
 
@@ -519,31 +424,67 @@ def create_content_package(decision: dict) -> dict:
 
 def _log_generation(media_type: str, prompt: str, output: str):
     _ensure_dirs()
-    log = []
+    log_data = []
     if os.path.exists(MEDIA_LOG):
         try:
             with open(MEDIA_LOG, "r") as f:
-                log = json.load(f)
+                log_data = json.load(f)
         except Exception:
-            log = []
+            log_data = []
 
-    log.append({
+    log_data.append({
         "date": datetime.now().isoformat(),
         "type": media_type,
         "prompt": prompt[:300],
         "output": output,
     })
-    log = log[-500:]
+    log_data = log_data[-500:]
     with open(MEDIA_LOG, "w") as f:
-        json.dump(log, f, indent=2)
+        json.dump(log_data, f, indent=2)
+
+
+# ─────────────────────────────────────────────
+# LIBRARY STATUS
+# ─────────────────────────────────────────────
+
+def library_status() -> dict:
+    """Get status of the pre-generated image library."""
+    images = _load_image_library()
+    if not images:
+        return {"total": 0, "status": "EMPTY — needs pre-generation"}
+
+    total = len(images)
+    used = sum(1 for img in images if img.get("used_count", 0) > 0)
+    avg_usage = sum(img.get("used_count", 0) for img in images) / total if total else 0
+
+    vehicles = list(set(img.get("vehicle", "") for img in images))
+    styles = list(set(img.get("wrap_style", "") for img in images))
+
+    return {
+        "total": total,
+        "used": used,
+        "unused": total - used,
+        "avg_usage": round(avg_usage, 1),
+        "vehicles": vehicles,
+        "wrap_styles": styles,
+        "status": "OK" if total >= 5 else "LOW — needs more images",
+    }
 
 
 if __name__ == "__main__":
-    # Test AI image generation
+    # Show library status
+    status = library_status()
+    print(f"Image Library Status:")
+    for k, v in status.items():
+        print(f"  {k}: {v}")
+
+    # Test image selection
     test_decision = {
         "topic": "matte black Ford F-150 fleet wrap",
-        "image_prompt": "Ford F-150 with matte black vinyl wrap in Chicago",
-        "caption": "Transform your fleet with premium matte black wraps",
+        "image_prompt": "Ford F-150 with matte black vinyl wrap",
     }
-    result = generate_image(decision=test_decision)
-    print(f"Test result: {result}")
+    img = pick_image(test_decision)
+    if img:
+        print(f"\nSelected for test: {img.get('id')} — {img.get('url', '')[:60]}...")
+    else:
+        print("\nNo images available!")

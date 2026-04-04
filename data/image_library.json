@@ -1,0 +1,57 @@
+{
+  "version": "1.0",
+  "generated_at": "2026-04-04",
+  "description": "Pre-generated AI images of wrapped vehicles for social media posting. Each image shows an installer actively wrapping a vehicle inside a professional shop.",
+  "images": [
+    {
+      "id": "f150_matte_black_squeegee",
+      "url": "https://files.manuscdn.com/user_upload_by_module/session_file/310519663301520201/ERVLYXuBNKIFjZiL.png",
+      "vehicle": "Ford F-150",
+      "wrap_style": "matte black",
+      "action": "squeegeeing",
+      "setting": "professional wrap shop",
+      "tags": ["truck", "matte", "black", "f150", "ford", "squeegee", "install"],
+      "used_count": 0
+    },
+    {
+      "id": "porsche_911_satin_blue_heatgun",
+      "url": "https://files.manuscdn.com/user_upload_by_module/session_file/310519663301520201/EBbkHEgUsbFFosZj.png",
+      "vehicle": "Porsche 911",
+      "wrap_style": "satin midnight blue",
+      "action": "heat-gunning",
+      "setting": "professional wrap shop",
+      "tags": ["sports car", "satin", "blue", "porsche", "911", "heatgun", "bumper"],
+      "used_count": 0
+    },
+    {
+      "id": "sprinter_fleet_graphics_positioning",
+      "url": "https://files.manuscdn.com/user_upload_by_module/session_file/310519663301520201/eDHvhFOliyyJwFIR.png",
+      "vehicle": "Mercedes Sprinter van",
+      "wrap_style": "commercial fleet graphics",
+      "action": "positioning",
+      "setting": "professional wrap shop",
+      "tags": ["van", "fleet", "commercial", "sprinter", "mercedes", "graphics", "team"],
+      "used_count": 0
+    },
+    {
+      "id": "corvette_c8_chameleon_trimming",
+      "url": "https://files.manuscdn.com/user_upload_by_module/session_file/310519663301520201/nCjNpOLczTciFzfQ.png",
+      "vehicle": "Chevrolet Corvette C8",
+      "wrap_style": "color-shift chameleon",
+      "action": "trimming",
+      "setting": "professional wrap shop",
+      "tags": ["sports car", "chameleon", "color shift", "corvette", "c8", "trim", "exotic"],
+      "used_count": 0
+    },
+    {
+      "id": "rivian_r1t_matte_green_peeling",
+      "url": "https://files.manuscdn.com/user_upload_by_module/session_file/310519663301520201/yacMMRAHoFnPFQPr.png",
+      "vehicle": "Rivian R1T",
+      "wrap_style": "matte military green",
+      "action": "peeling",
+      "setting": "professional wrap shop",
+      "tags": ["truck", "ev", "electric", "matte", "green", "rivian", "r1t", "peel"],
+      "used_count": 0
+    }
+  ]
+}

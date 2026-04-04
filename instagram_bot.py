@@ -164,15 +164,16 @@ def create_post(caption: str = "", image_path: str = "", image_url: str = "", **
     if image_url:
         return post_with_image_url(caption, image_url)
 
-    # If no local image, generate an AI image of a wrapped vehicle
+    # If no local image, pick from pre-generated CDN library
     if not image_path or not os.path.exists(image_path):
-        print("  [INSTAGRAM] No image provided, generating AI vehicle image...", flush=True)
+        print("  [INSTAGRAM] No image provided, picking from CDN library...", flush=True)
         try:
             decision = {"topic": caption[:80], "caption": caption}
-            image_path = generate_image(decision=decision)
+            cdn_url = generate_image(decision=decision)
+            if cdn_url and cdn_url.startswith("http"):
+                return post_with_image_url(caption, cdn_url)
         except Exception as e:
-            log.warning(f"Image gen failed: {e}")
-            image_path = ""
+            log.warning(f"CDN image lookup failed: {e}")
 
     # HARD RULE: never post without an image
     if not image_path or not os.path.exists(image_path):

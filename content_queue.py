@@ -921,19 +921,19 @@ def _ensure_media(post: dict) -> tuple:
     if image_path and os.path.exists(image_path):
         return "", image_path
 
-    # Image is missing (common after GitHub Actions cache cycle) — regenerate
-    print("  [POST] Image missing, regenerating AI image on the fly...", flush=True)
+    # Image is missing — pick from pre-generated CDN library
+    print("  [POST] Image missing, picking from CDN image library...", flush=True)
     try:
-        from media_generator import generate_image
+        from media_generator import pick_image
         decision = post.get("decision", {})
         if not decision:
             decision = {"topic": post.get("topic", "vehicle wraps")}
-        new_path = generate_image(decision=decision)
-        if new_path and os.path.exists(new_path):
-            print(f"  [POST] Regenerated AI image: {new_path}", flush=True)
-            return "", new_path
+        img = pick_image(decision)
+        if img and img.get("url"):
+            print(f"  [POST] Found CDN image: {img.get('id')} — {img.get('url')[:60]}...", flush=True)
+            return img["url"], ""
     except Exception as e:
-        print(f"  [POST] Image regen failed: {e}", flush=True)
+        print(f"  [POST] CDN image lookup failed: {e}", flush=True)
     return "", ""
 
 

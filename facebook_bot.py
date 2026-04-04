@@ -180,17 +180,56 @@ def check_negative_reactions() -> list:
 
 # ─── Public interface for master.py ──────────────────────────────
 
-def create_post(caption: str = "", image_path: str = "", **kwargs) -> dict:
+def post_with_image_url(caption: str, image_url: str) -> dict:
+    """Post to Facebook using a pre-uploaded CDN image URL directly."""
+    token = _get_token()
+    if not token:
+        return {"success": False, "error": "No token"}
+
+    print(f"  [FACEBOOK] Posting with CDN image: {image_url[:80]}...", flush=True)
+    r = requests.post(f"{GRAPH_URL}/{PAGE_ID}/photos", data={
+        "url": image_url,
+        "message": caption,
+        "access_token": token
+    })
+    data = r.json()
+    post_id = data.get("post_id", data.get("id", ""))
+
+    if r.status_code == 200 and post_id:
+        record = {
+            "post_id": post_id,
+            "caption": caption[:200],
+            "type": "photo_url",
+            "image_url": image_url,
+            "timestamp": time.time(),
+            "url": f"https://facebook.com/{PAGE_ID}/posts/{post_id}"
+        }
+        history = _load_history()
+        history.append(record)
+        _save_history(history)
+        print(f"  [FACEBOOK] Posted via CDN URL: {record['url']}", flush=True)
+        return {"success": True, "post_id": post_id, "url": record["url"]}
+
+    print(f"  [FACEBOOK] CDN photo post failed: {data}", flush=True)
+    return {"success": False, "error": str(data)}
+
+
+def create_post(caption: str = "", image_path: str = "", image_url: str = "", **kwargs) -> dict:
     """Main entry: create a Facebook post.
 
     RULE: Every post MUST have an image of a wrapped vehicle.
-    If no image_path is provided, generate one via AI.
+    Supports image_url (CDN) or image_path (local file).
+    If neither is provided, generate one via AI.
     If image generation fails, refuse to post (never post text-only).
     """
     from media_generator import generate_image
 
     if not caption:
         caption = kwargs.get("text", "Chicago Fleet Wraps — premium vehicle wraps in Chicago.")
+
+    # If CDN image_url provided, use it directly (no download needed for FB)
+    if image_url and (not image_path or not os.path.exists(image_path)):
+        return post_with_image_url(caption, image_url)
 
     # If no image provided, generate an AI image of a wrapped vehicle
     if not image_path or not os.path.exists(image_path):

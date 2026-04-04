@@ -102,9 +102,13 @@ def run_trend_analysis() -> dict:
         hot_topics = trends.get("hot_topics", [])
         log(f"Found {len(hot_topics)} trending topics")
         for topic in hot_topics[:5]:
-            log(f"  TREND: {topic.get('topic', '')} "
-                f"(score: {topic.get('score', 0):.0f}, "
-                f"source: {topic.get('source', '')})")
+            # hot_topics can be plain strings or dicts depending on the AI response
+            if isinstance(topic, dict):
+                log(f"  TREND: {topic.get('topic', '')} "
+                    f"(score: {topic.get('score', 0):.0f}, "
+                    f"source: {topic.get('source', '')})")
+            else:
+                log(f"  TREND: {topic}")
 
         return trends
 

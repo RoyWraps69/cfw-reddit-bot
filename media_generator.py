@@ -25,8 +25,14 @@ from datetime import datetime
 from openai import OpenAI
 from config import DATA_DIR, OPENAI_MODEL, BUSINESS_CONTEXT
 
-base_url = os.environ.get("OPENAI_BASE_URL", None)
-client = OpenAI(base_url=base_url) if base_url else OpenAI()
+# Chat completions client — uses proxy if configured
+_chat_base_url = os.environ.get("OPENAI_BASE_URL", None)
+client = OpenAI(base_url=_chat_base_url) if _chat_base_url else OpenAI()
+
+# Image generation client — ALWAYS uses the real OpenAI API directly.
+# The proxy/gateway (OPENAI_BASE_URL) does NOT support /v1/images/generations
+# and returns 404. DALL-E must go direct to api.openai.com.
+image_client = OpenAI(base_url="https://api.openai.com/v1")
 
 MEDIA_DIR = os.path.join(DATA_DIR, "generated_media")
 MEDIA_LOG = os.path.join(DATA_DIR, "media_generation_log.json")
@@ -191,7 +197,7 @@ def generate_ai_image(image_prompt: str, retries: int = 3) -> str:
         print(f"  [MEDIA] AI image attempt {attempt + 1}/{retries}: {prompt[:100]}...", flush=True)
 
         try:
-            response = client.images.generate(
+            response = image_client.images.generate(
                 model="dall-e-3",
                 prompt=prompt,
                 size="1024x1024",
